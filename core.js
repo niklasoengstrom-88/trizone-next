@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.1.2 · 2026-07-31";
+export const BUILD = "next-0.2.0 · 2026-08-01";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -228,4 +228,427 @@ export function assignMatches(sessions, activities, cfg = {}) {
     if (!usedA.has(a.id) && !questions.some(q => q.activityId === a.id)) unplanned.push(a.id);
   }
   return { links, questions, unplanned, duplicates: detectDuplicates(activities) };
+}
+
+/* ================================================================
+   REGELMOTORN (regelverk v0.2 §3–§10 · planformat §5, §5d)
+   Ren funktion. Derived triggers och utfallsflaggor beräknas
+   UPPSTRÖMS och kommer in som `flags` — motorn beräknar ingen
+   fysiologi, den reagerar (precisering K5).
+   ================================================================ */
+
+/* Motorkonstanter — preciseringar K1–K3 (beslutslogg 2026-08-01) */
+export const ENGINE = {
+  qualityHardMin: 8,      /* K1: Z4+Z5 ≥ 8 min ⇒ kvalitet (v26-arvet, 480 s) */
+  qualityHardShare: 0.12, /* K1: eller ≥ 12 % av durationen                    */
+  maintFactor: 0.6,       /* K2: underhållsdos = 60 % av planerad duration     */
+  shortenFloorMin: 20,    /* K2/K3: shorten går aldrig under 20 min            */
+  protectedFloor: 0.5,    /* K3: kärndel för skyddade pass = 50 % av duration  */
+  comebackCount: 2,       /* D5: profildefault, överstyrs i bindings           */
+  slotHour: { Morgon: 7, Lunch: 12, "Kväll": 18 }  /* nominella klockslag för 24h-matte */
+};
+
+export const DAYNAMES = ["mån", "tis", "ons", "tors", "fre", "lör", "sön"];
+
+/* Restriktivitetsordning för D4 (mest restriktiv vinner vid lika nivå) */
+export const ACTION_RANK = { strike: 5, substitute: 4, downgrade: 3, shorten: 2, move: 1, warn: 0 };
+
+/* K1 — kvalitetspass: Z4+Z5 ≥ 8 min eller ≥ 12 % av durationen */
+export function isQuality(s) {
+  const d = zoneDist(s.profile);
+  const hard = d[3] + d[4];
+  return hard >= ENGINE.qualityHardMin ||
+         (s.durationMin > 0 && hard / s.durationMin >= ENGINE.qualityHardShare);
+}
+
+/* Zonprofil skalas proportionellt (shorten: profilen behålls, kortas) */
+export function scaleProfile(profile, factor) {
+  if (!Array.isArray(profile)) return profile;
+  return profile.map(([z, m]) => [z, Math.max(1, Math.round(m * factor))]);
+}
+
+/* Downgrade: kvalitet → Z2. Zoner ≥ 3 sänks till 2, Z1 orörd, duration behålls. */
+export function downgradeProfile(profile) {
+  if (!Array.isArray(profile)) return profile;
+  return profile.map(([z, m]) => [z >= 3 ? 2 : z, m]);
+}
+
+/* ---------- Datumgeometri (ISO-vecka → datum; behövs för dag/24h-matte) ---------- */
+function isoWeekMonday(iso) {                        /* "2026-W42" → UTC-måndag */
+  const m = /^(\d{4})-W(\d{2})$/.exec(String(iso));
+  if (!m) return null;
+  const [y, w] = [Number(m[1]), Number(m[2])];
+  const jan4 = new Date(Date.UTC(y, 0, 4));
+  const mon1 = new Date(jan4); mon1.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7));
+  mon1.setUTCDate(mon1.getUTCDate() + (w - 1) * 7);
+  return mon1;
+}
+export function sessionDate(plan, s) {               /* → "YYYY-MM-DD" eller null (oplacerat) */
+  const wk = (plan.weeks ?? []).find(w => w.week === s.week);
+  if (!wk || s.day == null) return null;
+  const d = isoWeekMonday(wk.iso);
+  if (!d) return null;
+  d.setUTCDate(d.getUTCDate() + s.day);
+  return d.toISOString().slice(0, 10);
+}
+function weekSpan(plan, weekNo) {                    /* → [måndag, söndag] eller null */
+  const wk = (plan.weeks ?? []).find(w => w.week === weekNo);
+  const d = wk && isoWeekMonday(wk.iso);
+  if (!d) return null;
+  const end = new Date(d); end.setUTCDate(d.getUTCDate() + 6);
+  return [d.toISOString().slice(0, 10), end.toISOString().slice(0, 10)];
+}
+function sessionInSpan(plan, s, from, to) {          /* oplacerat pass: veckan överlappar spannet */
+  const d = sessionDate(plan, s);
+  if (d) return d >= from && d <= to;
+  const ws = weekSpan(plan, s.week);
+  return !!ws && ws[0] <= to && ws[1] >= from;
+}
+function slotClock(plan, s) {                        /* nominell absoluttid i timmar, eller null */
+  const d = sessionDate(plan, s);
+  if (!d || !s.slot) return null;
+  return Date.parse(d + "T00:00:00Z") / 3600000 + ENGINE.slotHour[s.slot];
+}
+export function hoursBetween(plan, a, b) {
+  const ha = slotClock(plan, a), hb = slotClock(plan, b);
+  return ha == null || hb == null ? null : Math.abs(ha - hb);
+}
+
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/* ---------- applyRules — motorns enda ingång ----------
+   (plan, overlay, bindings, flags, now) → { actions, questions, log }
+   Muterar ingenting. Nivåordning genom pipeline: nivå 1 transformerar
+   arbetskopian, nivå 2 arbetar på resultatet ("strukturregeln tillämpas
+   därefter på ersättningspasset" — spec 1 §3), nivå 3 endast warn. */
+export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
+  const cfg = { ...ENGINE, ...(bindings.engine ?? {}) };
+  const nowDate = String(now).slice(0, 10);
+  const ov = overlay ?? {};
+  const actions = [], questions = [];
+
+  /* Arbetskopia: källa + overlay, transformeras progressivt */
+  const work = {};
+  for (const s of plan.sessions ?? []) work[s.id] = effectiveSession(s, ov.sessions?.[s.id]);
+  const list = () => Object.values(work);
+  const dateOf = id => sessionDate(plan, work[id]);
+
+  /* H4: samma regel max 1 gång per pass och dygn — läser overlayens events */
+  const firedToday = (rule, id) =>
+    (ov.sessions?.[id]?.events ?? []).some(e => e.rule === rule && String(e.t).slice(0, 10) === nowDate);
+
+  const push = (rule, level, id, action, why, payload = {}, orig = {}, extra = {}) => {
+    if (id && firedToday(rule, id)) return false;
+    actions.push({ rule, level, session: id, action, why, payload, orig, t: now, ...extra });
+    return true;
+  };
+
+  const shortenTo = (s, factor, rule, level, why, extra) => {
+    const floor = Math.max(cfg.shortenFloorMin,
+                           s.protected ? Math.ceil(s.durationMin * cfg.protectedFloor) : 0);
+    const nd = Math.max(floor, Math.round(s.durationMin * factor / 5) * 5);
+    if (nd >= s.durationMin) return;
+    const np = scaleProfile(s.profile, nd / s.durationMin);
+    if (push(rule, level, s.id, "shorten", why,
+             { durationMin: nd, profile: np },
+             { durationMin: s.durationMin, profile: s.profile }, extra)) {
+      s.durationMin = nd; s.profile = np;
+    }
+  };
+
+  const modes = ov.modes?.active ?? [];
+  const modeKey = m => m.rule + "@" + m.from;
+
+  /* ---------- NIVÅ 1 — säkerhet ---------- */
+
+  /* illness-stop: allt i spannet stryks, även protected och C — feber tränas aldrig igenom */
+  for (const m of modes.filter(m => m.rule === "illness-stop")) {
+    for (const s of list()) {
+      if (s.status === "struck" || !sessionInSpan(plan, s, m.from, m.to)) continue;
+      if (push("illness-stop", 1, s.id, "strike",
+               "Sjukdomsstopp: allt i spannet stryks. Feber tränas aldrig igenom.",
+               {}, { status: s.status ?? "planned" },
+               { modeKey: modeKey(m), comebackAfter: m.to })) s.status = "struck";
+    }
+  }
+
+  /* tissue-freeze: bunden gren ersätts — gäller även C (säkerhet ser ingen luft) */
+  for (const m of modes.filter(m => m.rule === "tissue-freeze")) {
+    const b = (bindings.rules ?? []).find(r => r.rule === "tissue-freeze") ?? {};
+    const sports = m.sport ? [].concat(m.sport) : (b.sport ?? []);
+    const sub = b.substitute ?? {};
+    for (const s of list()) {
+      if (s.status === "struck" || !sports.includes(s.sport)) continue;
+      if (!sessionInSpan(plan, s, m.from, m.to)) continue;
+      const target = isQuality(s) ? sub.quality : sub.easy;
+      if (!target || target === s.sport) continue;
+      if (push("tissue-freeze", 1, s.id, "substitute",
+               `Frys på ${s.sport}: passet växlas till ${target}, stimulansen behålls.`,
+               { sport: target }, { sport: s.sport }, { modeKey: modeKey(m) })) s.sport = target;
+    }
+  }
+
+  /* sleep-guard — D2: derived frågar, manual agerar */
+  for (const f of flags.filter(f => f.id === "sleep-guard")) {
+    const day = f.date ?? nowDate;
+    const targets = list().filter(s => s.status !== "struck" && isQuality(s) && dateOf(s.id) === day);
+    if (!targets.length) continue;
+    if (f.source === "derived") {
+      questions.push({ rule: "sleep-guard", sessions: targets.map(s => s.id),
+        ask: "Vilopulsen ligger högt över baslinjen — sov du dåligt? Dagens kvalitetspass föreslås växlas ned till Z2." });
+      continue;
+    }
+    for (const s of targets) {
+      const np = downgradeProfile(s.profile);
+      if (sameJson(np, s.profile)) continue;
+      if (push("sleep-guard", 1, s.id, "downgrade",
+               "Dålig natt: dagens kvalitet växlas ned till Z2. Aldrig hård löpning efter dålig natt.",
+               { profile: np }, { profile: s.profile })) s.profile = np;
+    }
+  }
+
+  /* illness-rampback — D5: grind, inte räknare. Kvalitet hålls Z2 tills bekräftat. */
+  const cb = ov.modes?.comeback;
+  if (cb && !cb.passed) {
+    for (const s of list()) {
+      if (s.status === "struck" || !isQuality(s)) continue;
+      const d = dateOf(s.id);
+      if (!d || !(d > cb.after)) continue;
+      const np = downgradeProfile(s.profile);
+      if (sameJson(np, s.profile)) continue;
+      if (push("illness-rampback", 1, s.id, "downgrade",
+               "Comeback: kvalitet hålls på Z2 tills grinden bekräftats.",
+               { profile: np }, { profile: s.profile })) s.profile = np;
+    }
+    if ((cb.z2done ?? 0) >= (cb.need ?? cfg.comebackCount)) {
+      questions.push({ rule: "illness-rampback",
+        ask: `${cb.need ?? cfg.comebackCount} Z2-pass i normal känsla — återuppta kvalitet?` });
+    }
+  }
+
+  /* ---------- NIVÅ 2 — struktur ---------- */
+
+  /* mode-vacation: B stryks (ej protected), A till underhållsdos. C är luft. */
+  for (const m of modes.filter(m => m.rule === "mode-vacation")) {
+    for (const s of list()) {
+      if (s.status === "struck" || s.prio === "C" || !sessionInSpan(plan, s, m.from, m.to)) continue;
+      if (s.prio === "B" && !s.protected) {
+        if (push("mode-vacation", 2, s.id, "strike",
+                 "Semester: B-pass stryks och jagas inte ikapp.",
+                 {}, { status: s.status ?? "planned" }, { modeKey: modeKey(m) })) s.status = "struck";
+      } else if (s.prio === "A") {
+        shortenTo(s, cfg.maintFactor, "mode-vacation", 2,
+                  "Semester: A-pass hålls på underhållsdos.", { modeKey: modeKey(m) });
+      }
+    }
+  }
+
+  /* mode-reduced: veckan komprimeras till A. B stryks (ej protected), C är luft. */
+  for (const m of modes.filter(m => m.rule === "mode-reduced")) {
+    for (const s of list()) {
+      if (s.status === "struck" || s.prio !== "B" || s.protected) continue;
+      if (!sessionInSpan(plan, s, m.from, m.to)) continue;
+      if (push("mode-reduced", 2, s.id, "strike",
+               "Reducerad vecka: komprimeras till A-passen. B stryks.",
+               {}, { status: s.status ?? "planned" }, { modeKey: modeKey(m) })) s.status = "struck";
+    }
+  }
+
+  /* missed-A / missed-B — trigger manual (spec 1 §6) */
+  const occupied = (week, day, slot, exceptId) =>
+    list().some(x => x.id !== exceptId && x.status !== "struck" &&
+                     x.week === week && x.day === day && x.slot === slot);
+
+  const findMoveTarget = (s) => {
+    const sched = bindings.schedule ?? {};
+    const cands = [];
+    for (let day = (s.day ?? -1) + 1; day <= 6; day++)
+      for (const slot of (sched[day] ?? []))
+        if (!occupied(s.week, day, slot, s.id) && !(day === s.day && slot === s.slot))
+          cands.push({ week: s.week, day, slot });
+    /* D3-grinden: kvalitetspass måste hamna ≥ 1 dygn (24 h) från närmaste andra kvalitetspass */
+    const gate = (c) => {
+      if (!isQuality(s)) return true;
+      const probe = { ...s, ...c };
+      return list().every(x => {
+        if (x.id === s.id || x.status === "struck" || !isQuality(x)) return true;
+        const h = hoursBetween(plan, probe, x);
+        return h == null || h >= 24;
+      });
+    };
+    for (const c of cands) if (gate(c)) return { target: c };
+    /* fallback: ta ett B-pass slot (ej protected) — B:t stryks */
+    for (const b of list()) {
+      if (b.prio !== "B" || b.protected || b.status === "struck" || b.week !== s.week ||
+          b.day == null || !b.slot) continue;
+      if (gate({ week: b.week, day: b.day, slot: b.slot }))
+        return { target: { week: b.week, day: b.day, slot: b.slot }, takeB: b.id };
+    }
+    return null;
+  };
+
+  for (const f of flags.filter(f => f.id === "missed" && f.sessionId)) {
+    const s = work[f.sessionId];
+    if (!s || s.status === "struck" || s.prio === "C") continue;   /* C: luft, flaggas aldrig */
+    if (s.prio === "B") {
+      if (s.protected) {
+        push("missed-B", 2, s.id, "warn",
+             "Skyddspasset stryks aldrig av missed-B — planera om det manuellt.", {}, {});
+      } else if (push("missed-B", 2, s.id, "strike",
+                      "Missat B-pass stryks. B jagas aldrig ikapp.",
+                      {}, { status: s.status ?? "planned" })) s.status = "struck";
+      continue;
+    }
+    /* missed-A: move → (B-slot) → strike, med D3/H2/H3 */
+    const found = findMoveTarget(s);
+    if (found) {
+      if (found.takeB) {
+        const b = work[found.takeB];
+        if (push("missed-A", 2, b.id, "strike",
+                 "A-passet tar B-passets slot. B jagas inte ikapp.",
+                 {}, { status: b.status ?? "planned" })) b.status = "struck";
+      }
+      if (push("missed-A", 2, s.id, "move",
+               `Missat A-pass flyttas till ${DAYNAMES[found.target.day]} ${found.target.slot}.`,
+               found.target, { week: s.week, day: s.day, slot: s.slot })) Object.assign(s, found.target);
+    } else if (push("missed-A", 2, s.id, "strike",
+                    "Ingen ledig slot utan kvalitetskonflikt (H2/D3) — passet stryks i stället för att flyttas.",
+                    {}, { status: s.status ?? "planned" })) s.status = "struck";
+  }
+
+  /* volume-cap: derived frågar (D2), manual/bekräftad ⇒ warn + shorten */
+  for (const f of flags.filter(f => f.id === "volume-cap" && f.sessionId)) {
+    const s = work[f.sessionId];
+    if (!s || s.status === "struck") continue;
+    if (f.source === "derived") {
+      questions.push({ rule: "volume-cap", sessions: [s.id],
+        ask: "Löpvolymen ligger över taket (110 % av 3-veckorssnittet). Korta veckans sista pass?" });
+      continue;
+    }
+    push("volume-cap", 2, s.id, "warn",
+         "Löpvolym över taket — dosen kapas.", {}, {});
+    shortenTo(s, f.factor ?? 0.8, "volume-cap", 2, "Volymtak: passet kortas.");
+  }
+
+  /* ---------- NIVÅ 3 — optimering (endast warn) ---------- */
+  const lvl3 = [];
+  const placed = list().filter(s => s.status !== "struck" && slotClock(plan, s) != null);
+
+  for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
+    const a = placed[i], b = placed[j];
+    const h = hoursBetween(plan, a, b);
+    if (h == null || h > 24) continue;
+    if (isQuality(a) && isQuality(b)) {
+      lvl3.push({ rule: "quality-spacing", level: 3, session: (a.day <= b.day ? b : a).id, action: "warn",
+        why: `Två kvalitetspass inom 24 h (${a.id} · ${b.id}). En dags mellanrum rekommenderas.`,
+        payload: {}, orig: {}, t: now, pair: [a.id, b.id] });
+    }
+    const st = a.sport === "strength" ? a : b.sport === "strength" ? b : null;
+    const q  = st === a ? b : a;
+    if (st && st.sport === "strength" && isQuality(q)) {
+      lvl3.push({ rule: "heavy-legs", level: 3, session: q.id, action: "warn",
+        why: `Tunga ben: styrka (${st.id}) inom 24 h från kvalitet (${q.id}) — överväg ordningsbyte.`,
+        payload: {}, orig: {}, t: now, pair: [st.id, q.id] });
+    }
+  }
+  /* utfallsflaggor passerar som warn (beräknade uppströms) */
+  for (const f of flags) {
+    if (f.id === "polarization") lvl3.push({ rule: "polarization", level: 3, session: f.sessionId ?? null,
+      action: "warn", why: `Veckan under 78 % lågintensivt — överväg att sänka ett pass.`, payload: {}, orig: {}, t: now, week: f.week });
+    if (f.id === "rpe-watch") lvl3.push({ rule: "rpe-watch", level: 3, session: f.sessionId ?? null,
+      action: "warn", why: "RPE ≥ 9 loggat — nästa kvalitetspass granskas mot återhämtning.", payload: {}, orig: {}, t: now });
+    if (f.id === "duration-drift") lvl3.push({ rule: "duration-drift", level: 3, session: f.sessionId ?? null,
+      action: "warn", why: "Utfall > 125 % av planerad duration — räknas mot veckovolymen.", payload: {}, orig: {}, t: now, week: f.week });
+  }
+  actions.push(...mergeEngineFlags(lvl3));
+
+  const log = actions.map(a =>
+    `[${a.rule}·n${a.level}] ${a.session ?? "vecka"} → ${a.action}: ${a.why}`);
+  return { actions, questions, log };
+}
+
+/* Flaggmerge (spec 1 §10, precisering K6): bredare mönster äter smalare,
+   överlevande nyckel behålls så loggspells inte bryts. */
+export function mergeEngineFlags(warns) {
+  const out = [...warns];
+  const eat = (survivorRule, preyRule, samePair) => {
+    for (const s of out.filter(w => w.rule === survivorRule)) {
+      const prey = out.find(w => w.rule === preyRule &&
+        (!samePair || (w.pair && s.pair && w.pair.some(id => s.pair.includes(id)))));
+      if (prey) {
+        s.why += " · " + prey.why;
+        s.merged = [...(s.merged ?? []), preyRule];
+        out.splice(out.indexOf(prey), 1);
+      }
+    }
+  };
+  eat("quality-spacing", "heavy-legs", true);   /* samma dygn/par */
+  eat("polarization", "duration-drift", false); /* samma rot: för mycket, för hårt */
+  return out;
+}
+
+/* ---------- applyActions — overlay-skrivning (planformat §5, P3, §9) ----------
+   Ren funktion: (overlay, actions) → ny overlay. Kvotvakten ligger i
+   lagringswrappern (UI-sessionen), inte här. Periodåtgärder (modeKey)
+   tar ögonblicksbild per pass före första beröring. */
+export function applyActions(overlay, actions) {
+  const ov = structuredClone(overlay ?? {});
+  ov.sessions ??= {}; ov.modes ??= {};
+  for (const a of actions) {
+    if (!(a.action in ACTION_RANK)) continue;   /* åtgärdslistan är uttömmande (spec 1 §4) */
+    const ev = { rule: a.rule, session: a.session, action: a.action, why: a.why, t: a.t };
+    if (a.session == null) { (ov.modes.log ??= []).push(ev); continue; }
+    const so = ov.sessions[a.session] ??= {};
+    if (a.modeKey && a.action !== "warn") {
+      const sn = (ov.modes.snapshots ??= {})[a.modeKey] ??= {};
+      if (!(a.session in sn)) {
+        const { events, ...rest } = overlay?.sessions?.[a.session] ?? {};
+        sn[a.session] = structuredClone(rest);
+      }
+    }
+    switch (a.action) {
+      case "strike":     so.status = "struck"; break;
+      case "move":       so.moved = { week: a.payload.week, day: a.payload.day, slot: a.payload.slot }; break;
+      case "substitute": so.adjust = { ...so.adjust, sport: a.payload.sport }; break;
+      case "downgrade":  so.adjust = { ...so.adjust, profile: a.payload.profile }; break;
+      case "shorten":    so.adjust = { ...so.adjust, durationMin: a.payload.durationMin, profile: a.payload.profile }; break;
+      case "warn":       break;
+    }
+    (so.events ??= []).push(ev);
+    if (a.rule === "illness-stop" && a.comebackAfter && !ov.modes.comeback) {
+      ov.modes.comeback = { need: ENGINE.comebackCount, z2done: 0, passed: false, after: a.comebackAfter };
+    }
+  }
+  return ov;
+}
+
+/* ---------- deactivateMode — exakt återställning (spec 1 §9) ----------
+   Återställer ögonblicksbilden UTOM för pass användaren rört manuellt
+   under lägets gång (events med rule "manual-*" efter lägets start).
+   Ångring loggas som egen post; events skrivs aldrig om. */
+export function deactivateMode(overlay, key, now = "") {
+  const ov = structuredClone(overlay ?? {});
+  ov.sessions ??= {}; ov.modes ??= {};
+  const mode = (ov.modes.active ?? []).find(m => m.rule + "@" + m.from === key);
+  const t0 = mode?.t ?? "";
+  const sn = ov.modes.snapshots?.[key] ?? {};
+  for (const [id, prior] of Object.entries(sn)) {
+    const cur = ov.sessions[id] ?? {};
+    const events = cur.events ?? [];
+    const userWon = events.some(e => String(e.rule ?? "").startsWith("manual") && String(e.t) > String(t0));
+    if (userWon) {
+      events.push({ rule: "undo:" + key, session: id, action: "keep",
+                    why: "Läge avaktiverat — användarens manuella version behålls.", t: now });
+      ov.sessions[id] = { ...cur, events };
+    } else {
+      ov.sessions[id] = { ...structuredClone(prior ?? {}), events:
+        [...events, { rule: "undo:" + key, session: id, action: "restore",
+                      why: "Läge avaktiverat — föregående tillstånd återställt.", t: now }] };
+    }
+  }
+  if (ov.modes.snapshots) delete ov.modes.snapshots[key];
+  ov.modes.active = (ov.modes.active ?? []).filter(m => m.rule + "@" + m.from !== key);
+  (ov.modes.log ??= []).push({ rule: "mode-off", session: null, action: "deactivate",
+    why: `Läget ${key} avaktiverat.`, t: now });
+  return ov;
 }

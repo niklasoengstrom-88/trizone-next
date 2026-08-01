@@ -3,13 +3,13 @@
 "use strict";
 import { BUILD as CORE_BUILD, validatePlan } from "./core.js";
 
-export const UI_BUILD = "next-0.1.2 · 2026-07-31";
+export const UI_BUILD = "next-0.2.0 · 2026-08-01";
 
 async function boot() {
   const el = document.getElementById("app");
   const rows = [];
   const row = (k, v, cls="") => rows.push(`<span class="k">${k}</span><span class="v ${cls}">${v}</span>`);
-  const stamp = UI_BUILD.split(" ")[0];                    /* "next-0.1.2" */
+  const stamp = UI_BUILD.split(" ")[0];                    /* "next-0.2.0" */
 
   row("core.js", CORE_BUILD, CORE_BUILD === UI_BUILD ? "ok" : "bad");
   row("ui.js", UI_BUILD, CORE_BUILD === UI_BUILD ? "ok" : "bad");
