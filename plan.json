@@ -1,0 +1,86 @@
+{
+  "formatVersion": 1,
+  "planVersion": "2026-07-31.1",
+  "generated": "2026-07-31",
+  "athlete": "niklas",
+  "anchor": { "raceId": "jonkoping-703-2027" },
+  "blocks": [
+    { "id": "skelett", "label": "Skelettblock", "start": "2026-10-12", "weeks": 3 }
+  ],
+  "weeks": [
+    { "week": 42, "iso": "2026-W42", "block": "skelett", "type": "normal",
+      "focus": "Tröskelprogression löp, CSS-underhåll sim" },
+    { "week": 43, "iso": "2026-W43", "block": "skelett", "type": "normal",
+      "focus": "Progression: femte intervallen tillkommer" },
+    { "week": 44, "iso": "2026-W44", "block": "skelett", "type": "test",
+      "focus": "Testvecka: FTP 20 min + CSS 400/200" }
+  ],
+  "sessions": [
+    { "id": "sk-w42-swim-css", "week": 42, "day": 1, "slot": "Lunch",
+      "sport": "swim", "prio": "B", "durationMin": 42,
+      "profile": [[1,10],[2,20],[3,8],[1,4]],
+      "text": {
+        "brief": "Teknik först, sedan CSS-blocket. Kvaliteten i vattnet sitter i vattenläget, inte i armarna.",
+        "exec": "400 in · 6×50 teknik · 4×200 CSS-tempo vila 20 s · 200 ut.",
+        "place": "Tisdagslunchen — banan är gles och passet ryms exakt.",
+        "goal": "CSS-blocken jagar målkravet på 1 900 m. Sekunderna köps med teknik, inte kraft." } },
+    { "id": "sk-w42-str-core", "week": 42, "day": 2, "slot": "Kväll",
+      "sport": "strength", "prio": "B", "protected": true, "durationMin": 40,
+      "profile": [[1,40]],
+      "text": {
+        "brief": "Skyddspasset. Det syns aldrig i måltiderna — det är förutsättningen för dem.",
+        "exec": "Bål, höft, ben. 2–3 reps i reserv, inga PR.",
+        "place": "Onsdag kväll — dagen före kvalitetslöpningen vore fel plats för tunga ben.",
+        "goal": "Skadefri är träningsbar. Träningsbar är det enda som bygger totaltiden." } },
+    { "id": "sk-w42-run-thr", "week": 42, "day": 3, "slot": "Kväll",
+      "sport": "run", "prio": "A", "durationMin": 50,
+      "profile": [[1,12],[4,6],[1,2],[4,6],[1,2],[4,6],[1,2],[4,6],[1,8]],
+      "text": {
+        "brief": "Veckans viktigaste pass. Fyra tröskelblock — sista ska kännas som att en femte varit möjlig.",
+        "exec": "12 min Z1 in · 4×6 min strax under tröskel, 2 min jogg · 8 min ut.",
+        "place": "Torsdag kväll ger två dygn till helgens långa cykel.",
+        "goal": "Tröskelblocken flyttar den uthålliga farten som halvmaran vilar på." } },
+    { "id": "sk-w42-bike-long", "week": 42, "day": 5, "slot": "Morgon",
+      "sport": "bike", "prio": "A", "durationMin": 150,
+      "profile": [[1,20],[2,110],[1,20]],
+      "text": {
+        "brief": "Durationståligheten byggs här — kroppen ska lära sig hålla Z2 och ta emot näring i timmar.",
+        "exec": "Jämn Z2. 60–80 g kolhydrat per timme. Kadens 85–90.",
+        "place": "Lördagsmorgonen är veckans enda långa fönster.",
+        "goal": "Nio mil på tävlingsdagen är främst en durationsfråga." } },
+    { "id": "sk-w42-run-easy", "week": 42, "day": 6, "slot": "Kväll",
+      "sport": "run", "prio": "C", "durationMin": 35,
+      "profile": [[1,10],[2,25]],
+      "text": {
+        "brief": "Bonuspass. Blir det av adderar det — blir det inte av har inget hänt.",
+        "exec": "Lugn Z2, samtalstempo hela vägen.",
+        "place": "",
+        "goal": "Z2-volymen är grunden som gör målfarten hållbar." } },
+    { "id": "sk-w42-swim-ow", "week": 42, "sport": "swim", "prio": "C", "durationMin": 30,
+      "profile": [[1,8],[2,22]],
+      "text": {
+        "brief": "Oplacerat menypass — lägg det där veckan tillåter, eller låt bli.",
+        "exec": "Lugn distans, valfri miljö.",
+        "place": "",
+        "goal": "Vattenvana är färskvara." } },
+    { "id": "sk-w43-run-thr", "week": 43, "day": 2, "slot": "Kväll",
+      "sport": "run", "prio": "A", "durationMin": 56,
+      "profile": [[1,12],[4,6],[1,2],[4,6],[1,2],[4,6],[1,2],[4,6],[1,2],[4,6],[1,6]],
+      "text": {
+        "brief": "Progressionen: femte blocket tillkommer. Samma tempo som förra veckan — inte snabbare.",
+        "exec": "5×6 min strax under tröskel, 2 min jogg.",
+        "place": "Onsdag kväll, två dygn före långpasset.",
+        "goal": "Volym på tröskelfarten, inte fart på tröskeln." } },
+    { "id": "sk-w44-bike-ftp", "week": 44, "day": 2, "slot": "Kväll",
+      "sport": "bike", "prio": "A", "durationMin": 60,
+      "profile": [[1,15],[3,10],[1,5],[5,20],[1,10]],
+      "text": {
+        "brief": "FTP-testet. 20 minuter ärlighet — prognosen låses upp av det här passet.",
+        "exec": "Uppvärmning · 10 min stegring · 20 min max jämn effekt · nedvarvning.",
+        "place": "Testvecka: utvilade ben, inomhus, wattmätare.",
+        "goal": "Testet sätter wattbudgeten för hela cykelmålet." } }
+  ],
+  "changelog": [
+    { "planVersion": "2026-07-31.1", "note": "Skelettblock för produktionsstart — valideringsreferens, inte träningsplan" }
+  ]
+}

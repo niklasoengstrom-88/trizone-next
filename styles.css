@@ -1,0 +1,29 @@
+/* TRIZONE Next — styles.css · BUILD next-0.1.0 · 2026-07-31
+   Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
+:root{
+  --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
+  --line:#232330; --line-soft:#1B1B24;
+  --ink:#F1EDE6; --mut:#A6A29B; --faint:#6E6B66;
+  --accent:#E8632C;
+  --swim:#56B4D3; --bike:#E3C051; --run:#D5527C; --strength:#9A8FD0;
+  --z1:#2A3A52; --z2:#3A5578; --z3:#4C74A6; --z4:#6495CC; --z5:#8FBCEE;
+  --ok:#3FBF8A; --warn:#E8A13C; --risk:#E2483A; --info:#5B93E6;
+  --serif-display:"Playfair Display",Georgia,serif;
+  --serif-text:"Source Serif 4",Georgia,serif;
+  --sans:"Inter",system-ui,sans-serif;
+  --wm:"Michroma",sans-serif;
+  --r:20px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;min-height:100dvh}
+main{max-width:640px;margin:0 auto;padding:24px 18px}
+.eyebrow{font-weight:600;letter-spacing:.2em;text-transform:uppercase;font-size:10.5px;color:var(--faint)}
+h1{font-family:var(--serif-display);font-style:italic;font-weight:600;font-size:34px;margin-top:6px}
+.sub{color:var(--mut);font-size:13.5px;margin-top:8px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-top:16px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:13px;margin-top:10px}
+.kv .k{color:var(--faint)}.kv .v{color:var(--ink)}
+.ok{color:var(--ok)}.bad{color:var(--risk)}
+.wm{font-family:var(--wm);letter-spacing:.16em;font-size:13px}
