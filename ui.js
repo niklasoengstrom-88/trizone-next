@@ -1,29 +1,37 @@
 /* TRIZONE Next — ui.js · Rendering och händelser. All logik importeras från core.
-   BUILD-paritet kontrolleras vid uppstart (självkontroll över alla filer). */
+   Byggstämpelparitet över ALLA fem filer: core, ui, index (meta), sw (aktiv cache), plan. */
 "use strict";
 import { BUILD as CORE_BUILD, validatePlan } from "./core.js";
 
-export const UI_BUILD = "next-0.1.1 · 2026-07-31";
+export const UI_BUILD = "next-0.1.2 · 2026-07-31";
 
 async function boot() {
   const el = document.getElementById("app");
   const rows = [];
   const row = (k, v, cls="") => rows.push(`<span class="k">${k}</span><span class="v ${cls}">${v}</span>`);
+  const stamp = UI_BUILD.split(" ")[0];                    /* "next-0.1.2" */
 
-  /* Byggstämpelparitet: core ↔ ui ↔ sw */
-  const uiOk = UI_BUILD === CORE_BUILD;
-  row("core.js", CORE_BUILD, uiOk ? "ok" : "bad");
-  row("ui.js", UI_BUILD, uiOk ? "ok" : "bad");
-  let swMsg = "ej registrerad (kräver https/localhost)";
+  row("core.js", CORE_BUILD, CORE_BUILD === UI_BUILD ? "ok" : "bad");
+  row("ui.js", UI_BUILD, CORE_BUILD === UI_BUILD ? "ok" : "bad");
+
+  const meta = document.querySelector('meta[name="build"]')?.content ?? "meta saknas";
+  row("index.html", meta, meta === UI_BUILD ? "ok" : "bad");
+
+  /* sw: registrera + läs AKTIV cache — avslöjar halvlandade deployer */
+  let swTxt = "ej registrerad (kräver https/localhost)", swCls = "";
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     try {
-      const reg = await navigator.serviceWorker.register("./sw.js");
-      swMsg = "registrerad · cache verifieras vid aktivering";
-    } catch (e) { swMsg = "registrering misslyckades: " + e.message; }
+      await navigator.serviceWorker.register("./sw.js");
+      const keys = await caches.keys();
+      const mine = keys.filter(k => k.startsWith("trizone-next-"));
+      const want = "trizone-next-" + stamp.replace("next-", "");
+      if (!mine.length) { swTxt = "registrerad · cache byggs vid aktivering"; }
+      else if (mine.length === 1 && mine[0] === want) { swTxt = mine[0]; swCls = "ok"; }
+      else { swTxt = mine.join(", ") + " (väntat " + want + ") — ladda om"; swCls = "bad"; }
+    } catch (e) { swTxt = "registrering misslyckades: " + e.message; swCls = "bad"; }
   }
-  row("sw.js", swMsg);
+  row("sw-cache", swTxt, swCls);
 
-  /* Planhämtning: network-first, validering före rendering (F4) */
   try {
     const res = await fetch("./plan.json", { cache: "no-cache" });
     const plan = await res.json();
