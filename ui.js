@@ -3,7 +3,7 @@
 "use strict";
 import { BUILD as CORE_BUILD, validatePlan } from "./core.js";
 
-export const UI_BUILD = "next-0.1.0 · 2026-07-31";
+export const UI_BUILD = "next-0.1.1 · 2026-07-31";
 
 async function boot() {
   const el = document.getElementById("app");
