@@ -6,7 +6,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          manualAdjust, shortDate, DAYLABEL,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG } from "./core.js";
 
-export const UI_BUILD = "next-0.5.2 · 2026-08-02";
+export const UI_BUILD = "next-0.5.3 · 2026-08-02";
 
 /* Livsschema: profildata (D7). Framhäver träningsdagar — spärrar aldrig placering. */
 const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
@@ -14,7 +14,7 @@ const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"],
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null };
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
-    rafId = 0, holdTimer = 0;
+    rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
 
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 const SPORTLABEL = { swim:"SIM", bike:"CYKEL", run:"LÖP", strength:"STYRKA" };
@@ -192,9 +192,11 @@ function pointOver(x, y) {
 function endDrag(ev) {
   clearTimeout(holdTimer); cancelAnimationFrame(rafId);
   const prev = D;
+  if (prev.phase === "idle") { D = dragIdle; return; }   /* inget pass inblandat — rör inte vyn */
   D = dragReduce(D, ev);
   dropGhost(); setHot(null);
   document.body.classList.remove("nodrag");
+  swallowUntil = Date.now() + 500;      /* webbläsarens click för samma tryck ska inte träffa nya knappar */
   if (D.drop) {
     const { id, week, day } = D.drop;
     const cur = findSess(id);
@@ -209,7 +211,7 @@ function endDrag(ev) {
     S.sel = D.tap;
   }
   D = dragIdle;
-  if (prev.phase === "drag" || D !== prev) render();
+  render();
 }
 
 function wire() {
@@ -261,6 +263,12 @@ function wire() {
   });
 
   root.addEventListener("click", (ev) => {
+    if (swallowUntil && Date.now() < swallowUntil) {        /* spökklicket från trycket vi just hanterade */
+      swallowUntil = 0;
+      ev.preventDefault?.(); ev.stopPropagation?.();
+      return;
+    }
+    swallowUntil = 0;
     const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today]");
     if (!t) return;
     S.note = null;

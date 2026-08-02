@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.5.2 · 2026-08-02
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.5.3 · 2026-08-02
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -32,7 +32,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.5.2 · 2026-08-02" }),
+  querySelector: () => ({ content: "next-0.5.3 · 2026-08-02" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -55,13 +55,16 @@ const target = (dataset, kinds, wk) => ({
     return kinds.some(k => sel.includes(k)) ? { dataset } : null;
   }
 });
+const ghostClick = () => fire("click", { target: target({ act: "strike" }, ["data-act"]),
+  preventDefault(){}, stopPropagation(){} });
 const tapCard = (id, wk = 42) => { const t = target({ sess: id }, ["data-sess"], wk);
   fire("pointerdown", { button: 0, target: t, clientX: 5, clientY: 5, pointerType: "touch", pointerId: 1 });
-  fire("pointerup", { target: t, t: Date.now() }); };
+  fire("pointerup", { target: t, t: Date.now() });
+  ghostClick();                      /* värsta fallet: spökklicket landar på Stryk */ };
 const clickBtn = dataset => fire("click", { target: target(dataset, Object.keys(dataset).map(k => "data-" + k)) });
 
 /* ---------- Löpande listan ---------- */
-has(els.diag.innerHTML, "next-0.5.2", "paritetskortet renderas");
+has(els.diag.innerHTML, "next-0.5.3", "paritetskortet renderas");
 has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
 has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
 has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
@@ -73,9 +76,25 @@ has(els.app.innerHTML, "50 min", "kortet bär gren, prio, duration och titel —
 has(els.app.innerHTML, "data-today", "Idag-knappen finns");
 ok(!/undefined|NaN|\[object/.test(els.app.innerHTML), "ingen undefined/NaN läcker ut i markup");
 
+/* ---------- Spökklicksspärren (0.5.2-buggen) ---------- */
+{ const t = target({ sess: "sk-w42-run-thr" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 40, clientY: 900, pointerType: "touch", pointerId: 9 });
+  fire("pointerup", { target: t, t: Date.now() });
+  has(els.app.innerHTML, "sheetwrap", "tryck öppnar panelen");
+  fire("click", { target: target({ act: "strike" }, ["data-act"]) });   /* spökklicket */
+  ok(!JSON.parse(mem.get("trizone.overlay.v1") ?? "{}").sessions?.["sk-w42-run-thr"]?.status,
+     "spökklick på Stryk utlöser ingenting — passet stryks inte av ett vanligt tryck");
+  has(els.app.innerHTML, "sheetwrap", "spökklick stänger inte heller panelen");
+  await new Promise(r => setTimeout(r, 500));
+  fire("click", { target: target({ act: "close" }, ["data-act"]) });
+  ok(!els.app.innerHTML.includes("sheetwrap"), "riktigt klick efter spärren fungerar som vanligt"); }
+
 /* ---------- Tryckvägen: panel → dag ---------- */
 tapCard("sk-w42-swim-ow");
 has(els.app.innerHTML, "sheetwrap", "tryck på pass öppnar justeringspanelen");
+ok(!JSON.parse(mem.get("trizone.overlay.v1")).sessions?.["sk-w42-swim-ow"]?.status,
+   "0.5.2-buggen: spökklicket efter trycket stryker inte passet");
+has(els.app.innerHTML, "sheetwrap", "0.5.2-buggen: spökklicket stänger inte panelen heller");
 clickBtn({ act: "move" });
 has(els.app.innerHTML, "Tryck på en dag", "placeringsläget instruerar tydligt");
 ok((els.app.innerHTML.match(/data-target/g) ?? []).length === 21, "alla 21 dagar är mål — även i andra veckor");
@@ -104,6 +123,9 @@ const drag = (id, wi, d, { commit = true, wk = 42 } = {}) => {
   ok(!els.app.innerHTML.includes("Flyttat:"), "långt tryck skriver ingen flytt");
   fire("click", { target: target({ act: "close" }, ["data-act"]) }); }
 ok(!els.app.innerHTML.includes("data-grip"), "greppet är borttaget — hela kortet drar via långtryck");
+{ const before = els.app.innerHTML;
+  fire("pointerup", { t: Date.now() });          /* släpp utan föregående tryck på pass */
+  ok(els.app.innerHTML === before, "pointerup utan pass rör inte vyn — knappar rivs inte mellan tryck och klick"); }
 await drag("sk-w42-run-thr", 1, 4);              /* vecka 43, fredag */
 has(els.app.innerHTML, "Flyttat: fre v.43", "drag till en annan vecka i listan — släpp på dagen räcker");
 { const m = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-run-thr"].moved;
