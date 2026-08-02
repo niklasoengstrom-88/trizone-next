@@ -6,7 +6,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          manualAdjust, shortDate, DAYLABEL,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG } from "./core.js";
 
-export const UI_BUILD = "next-0.5.0 · 2026-08-02";
+export const UI_BUILD = "next-0.5.2 · 2026-08-02";
 
 /* Livsschema: profildata (D7). Framhäver träningsdagar — spärrar aldrig placering. */
 const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
@@ -47,11 +47,9 @@ function sessionCard(s) {
     <div class="line1">
       <span class="prio p${esc(s.prio)}">${esc(s.prio)}</span>
       <span class="lbl">${SPORTLABEL[s.sport] ?? esc(s.sport)}</span>
-      ${s.slot ? `<span class="wtag">${esc(s.slot)}</span>` : ""}
       ${s.protected ? `<span class="shield" title="Skyddat pass">◈</span>` : ""}
       ${struck ? `<span class="tag">struket</span>` : ""}
       <span class="dur">${s.durationMin} min</span>
-      <span class="grip" data-grip="${esc(s.id)}" aria-hidden="true">⠿</span>
     </div>
     <div class="stitle">${esc(s.title ?? s.id)}</div>
     ${zstrip(s.profile)}
@@ -199,6 +197,10 @@ function endDrag(ev) {
   document.body.classList.remove("nodrag");
   if (D.drop) {
     const { id, week, day } = D.drop;
+    const cur = findSess(id);
+    if (cur && cur.week === week && cur.day === day) {      /* släppt där det redan låg */
+      D = dragIdle; render(); return;
+    }
     buzz(10);
     moveTo(id, { week, day, slot: null }, `Flyttat: ${DAYLABEL[day]} v.${week}.`);
   } else if (D.cancelled) {
@@ -218,7 +220,7 @@ function wire() {
     const card = ev.target.closest("[data-sess]");
     if (!card) return;
     const wk = Number(ev.target.closest(".wk")?.id?.slice(3) ?? S.week);
-    const grip = !!ev.target.closest("[data-grip]") || ev.pointerType === "mouse";
+    const grip = ev.pointerType === "mouse";      /* mus drar direkt; finger kräver alltid långtryck */
     D = dragReduce(dragIdle, { type: "down", id: card.dataset.sess, x: ev.clientX, y: ev.clientY,
                                t: Date.now(), grip, week: wk });
     root.setPointerCapture?.(ev.pointerId);

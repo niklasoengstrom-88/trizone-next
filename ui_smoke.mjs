@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.5.0 · 2026-08-02
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.5.2 · 2026-08-02
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -32,7 +32,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.5.0 · 2026-08-02" }),
+  querySelector: () => ({ content: "next-0.5.2 · 2026-08-02" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -61,14 +61,15 @@ const tapCard = (id, wk = 42) => { const t = target({ sess: id }, ["data-sess"],
 const clickBtn = dataset => fire("click", { target: target(dataset, Object.keys(dataset).map(k => "data-" + k)) });
 
 /* ---------- Löpande listan ---------- */
-has(els.diag.innerHTML, "next-0.5.0", "paritetskortet renderas");
+has(els.diag.innerHTML, "next-0.5.2", "paritetskortet renderas");
 has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
 has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
 has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
 ok((els.app.innerHTML.match(/class="day/g) ?? []).length === 21, "21 dagrader — hela planen i följd");
 has(els.app.innerHTML, "12 okt – 18 okt", "veckorubriken bär sina datum");
 has(els.app.innerHTML, "ljusare = hårdare", "zonrampens legend finns");
-has(els.app.innerHTML, 'class="wtag">Kväll', "planens fönsterförslag visas som metadata-tagg");
+ok(!els.app.innerHTML.includes('class="wtag"'), "fönstertaggen är borta ur kortet (0.5.2)");
+has(els.app.innerHTML, "50 min", "kortet bär gren, prio, duration och titel — inget mer");
 has(els.app.innerHTML, "data-today", "Idag-knappen finns");
 ok(!/undefined|NaN|\[object/.test(els.app.innerHTML), "ingen undefined/NaN läcker ut i markup");
 
@@ -94,6 +95,15 @@ const drag = (id, wi, d, { commit = true, wk = 42 } = {}) => {
     r();
   }, 260));
 };
+/* Långt stillastående tryck ⇒ panel, aldrig flytt (0.5.0-buggen) */
+{ const t = target({ sess: "sk-w42-bike-long" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 90, clientY: 120, pointerType: "touch", pointerId: 7 });
+  await new Promise(r => setTimeout(r, 300));
+  fire("pointerup", { t: Date.now() });
+  has(els.app.innerHTML, "sheetwrap", "långt tryck utan rörelse öppnar panelen");
+  ok(!els.app.innerHTML.includes("Flyttat:"), "långt tryck skriver ingen flytt");
+  fire("click", { target: target({ act: "close" }, ["data-act"]) }); }
+ok(!els.app.innerHTML.includes("data-grip"), "greppet är borttaget — hela kortet drar via långtryck");
 await drag("sk-w42-run-thr", 1, 4);              /* vecka 43, fredag */
 has(els.app.innerHTML, "Flyttat: fre v.43", "drag till en annan vecka i listan — släpp på dagen räcker");
 { const m = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-run-thr"].moved;

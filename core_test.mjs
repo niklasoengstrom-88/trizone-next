@@ -632,22 +632,23 @@ const seq = (...evs) => evs.reduce((st, e) => dragReduce(st, e), dragIdle);
   eq(s.tap, "p1", "kort tryck utan rörelse är ett tryck, inte ett drag");
   eq(s.phase, "idle", "trycket lämnar maskinen i vila"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10, week:42 }, { type:"hold" },
-                { type:"over", day:3, slot:"Kväll" }, { type:"up" });
+                { type:"move", x:10, y:300 }, { type:"over", day:3, slot:"Kväll" }, { type:"up" });
   eq(s.drop, { id:"p1", week:42, day:3, slot:"Kväll" }, "släpp på ett fönster ger en flytt");
   ok(!s.cancelled, "lyckat släpp är inte ett avbrott"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10, week:42 }, { type:"hold" },
-                { type:"over", day:3, slot:null }, { type:"up" });
+                { type:"move", x:10, y:300 }, { type:"over", day:3, slot:null }, { type:"up" });
   eq(s.drop, { id:"p1", week:42, day:3, slot:null }, "beslut A: släpp på en dag räcker — fönster behövs inte"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"hold" },
-                { type:"over", day:null, slot:null }, { type:"up" });
+                { type:"move", x:10, y:300 }, { type:"over", day:null, slot:null }, { type:"up" });
   ok(s.cancelled && !s.drop, "släpp utanför alla dagar flyttar ingenting — hellre avbrott än gissning"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10, week:42 }, { type:"hold" },
+                { type:"move", x:10, y:400 },
                 { type:"over", day:1, slot:"Lunch" }, { type:"week", week:43 },
                 { type:"over", day:5, slot:"Morgon" }, { type:"up" });
   eq(s.drop, { id:"p1", week:43, day:5, slot:"Morgon" }, "draget överlever veckobyte ⇒ flytt mellan veckor");
   }
 { const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"hold" },
-                { type:"over", day:2, slot:"Kväll" }, { type:"cancel" });
+                { type:"move", x:10, y:300 }, { type:"over", day:2, slot:"Kväll" }, { type:"cancel" });
   ok(s.cancelled && !s.drop, "avbrott (Esc/pekare borta) släpper draget utan att ändra något"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"hold" }, { type:"move", x:44, y:300 });
   eq([s.x, s.y], [44, 300], "draget följer pekaren"); }
@@ -655,15 +656,23 @@ const seq = (...evs) => evs.reduce((st, e) => dragReduce(st, e), dragIdle);
      "hovring utan pågående drag ändrar ingenting");
   eq(dragReduce(dragIdle, { type:"fnord" }).phase, "idle", "okänd händelse lämnar tillståndet orört"); }
 
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, week:42, t:0 }, { type:"hold" },
+                { type:"over", day:2 }, { type:"up", t: 1500 });
+  eq(s.tap, "p1", "0.5.0-buggen: långt stillastående tryck är ett tryck, aldrig en tom flytt");
+  ok(!s.drop, "stillastående tryck skriver ingen flytt"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, week:42 }, { type:"hold" },
+                { type:"move", x:16, y:18 }, { type:"over", day:2 }, { type:"up" });
+  eq(s.tap, "p1", "litet fingerglid under draget är fortfarande ett tryck"); }
+
 /* ---------- Droppen ger en giltig justering (kopplingen till §5d) ---------- */
 { const s = seq({ type:"down", id:"sk-w42-run-thr", x:1, y:1, week:42 }, { type:"hold" },
-                { type:"over", day:5 }, { type:"up" });
+                { type:"move", x:1, y:400 }, { type:"over", day:5 }, { type:"up" });
   const r = manualAdjust(plan, {}, s.drop.id, "move", s.drop, NOW);
   ok(!r.error, "droppens nyttolast går rakt in i manuell justering");
   eq(weekView(plan, r.overlay, 42, B).days[5].sessions.map(x => x.id),
      ["sk-w42-bike-long", "sk-w42-run-thr"], "passet ligger där det släpptes, sida vid sida med dagens övriga"); }
 { const s = seq({ type:"down", id:"sk-w42-run-thr", x:1, y:1, week:42 }, { type:"hold" },
-                { type:"over", week:43, day:1 }, { type:"up" });
+                { type:"move", x:1, y:400 }, { type:"over", week:43, day:1 }, { type:"up" });
   const r = manualAdjust(plan, {}, s.drop.id, "move", s.drop, NOW);
   eq(weekView(plan, r.overlay, 43, B).days[1].sessions[0].id,
      "sk-w42-run-thr", "pass går att dra till en annan vecka — over bär veckan i den löpande listan");
@@ -673,7 +682,7 @@ const seq = (...evs) => evs.reduce((st, e) => dragReduce(st, e), dragIdle);
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 216;
+const EXPECTED_MIN = 220;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

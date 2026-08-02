@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.5.0 · 2026-08-02";
+export const BUILD = "next-0.5.2 · 2026-08-02";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -994,6 +994,9 @@ export function dragReduce(state = dragIdle, ev = {}) {
         return quick && near ? { ...dragIdle, tap: s.id } : { ...dragIdle };
       }
       if (s.phase !== "drag") return { ...dragIdle };
+      /* Fingret har inte rest någonstans ⇒ det var ett tryck, oavsett hur länge det låg kvar.
+         (0.5.0-buggen: långt stillastående tryck blev en tom flytt till egen dag.) */
+      if (Math.hypot(s.x - s.sx, s.y - s.sy) < DRAG.tapDist) return { ...dragIdle, tap: s.id };
       return s.day != null
         ? { ...dragIdle, drop: { id: s.id, week: s.week, day: s.day, slot: s.slot ?? null } }
         : { ...dragIdle, cancelled: true };
