@@ -1,4 +1,4 @@
-/* TRIZONE Next — styles.css · BUILD next-0.4.0 · 2026-08-02
+/* TRIZONE Next — styles.css · BUILD next-0.5.0 · 2026-08-02
    Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
 :root{
   --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
@@ -29,40 +29,42 @@ h1{font-family:var(--serif-display);font-style:italic;font-weight:600;font-size:
 .wm{font-family:var(--wm);letter-spacing:.16em;font-size:13px}
 
 /* ---------- Veckovyn (designspråk S4, L1–L4) ---------- */
-.wknav{display:flex;align-items:center;gap:10px;margin-top:4px}
-.wkhead{flex:1;min-width:0}
-.wkhead h1{margin-top:2px}
-.nav{width:44px;height:44px;flex:none;border:1px solid var(--line);border-radius:14px;
-  background:var(--surface);color:var(--ink);font-size:20px;line-height:1;cursor:pointer}
-.nav:disabled{opacity:.32;cursor:default}
-.nav:not(:disabled):active{background:var(--surface-hi)}
-.focus{font-family:var(--serif-text);color:var(--mut);font-size:14.5px;margin-top:8px}
-.sums{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:12px;font-size:12.5px;color:var(--mut)}
+.wk{margin-top:6px}
+.wk + .wk .wkhead{margin-top:26px}
+.wkhead{padding:10px 0 4px;border-top:2px solid var(--line)}
+.wk:first-of-type .wkhead{border-top:0;padding-top:0}
+.wkrow{display:flex;align-items:baseline;gap:10px}
+.wkrow h1{font-size:27px}
+.wkdates{color:var(--faint);font-size:11.5px}
+.wktype{margin-left:auto;color:var(--warn);font-size:10px;font-weight:600;
+  letter-spacing:.16em;text-transform:uppercase}
+.focus{font-family:var(--serif-text);color:var(--mut);font-size:13.5px;margin-top:4px}
+.sums{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:8px;font-size:12px;color:var(--mut)}
 .sums b{color:var(--ink);font-weight:600}
 .sums .dim{color:var(--faint)}
 
-.week{margin-top:18px}
-.day{padding:12px 0;border-top:1px solid var(--line-soft)}
+.day{padding:7px 0 8px;border-top:1px solid var(--line-soft);border-radius:10px}
+.day.empty{padding:5px 0 6px}
+.day.empty .dhead{opacity:.55}
 .day.today .dname{color:var(--accent)}
 .dhead{display:flex;align-items:baseline;gap:9px}
 .dname{font-weight:600;font-size:12px;letter-spacing:.14em;text-transform:uppercase}
 .ddate{color:var(--faint);font-size:11.5px}
 .dmin{margin-left:auto;color:var(--faint);font-size:11.5px}
-.dslots{margin-top:8px;display:flex;flex-direction:column;gap:10px}
-.rest{color:var(--faint);font-size:12.5px;font-family:var(--serif-text);font-style:italic}
+.dslots{margin-top:6px;display:flex;flex-direction:column;gap:6px}
 .slot{display:flex;gap:10px;align-items:flex-start}
-.wchip{flex:none;min-width:58px;margin-top:8px;font-size:10px;font-weight:600;letter-spacing:.16em;
+.wchip{flex:none;min-width:52px;margin-top:9px;font-size:9.5px;font-weight:600;letter-spacing:.14em;
   text-transform:uppercase;color:var(--faint)}
 .slot.offsched .wchip{color:var(--warn);opacity:.85}
 .sessions{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
 
 /* Passkort — L1: ram + yta reserverat för tappbara objekt */
 .sess{position:relative;display:block;width:100%;text-align:left;cursor:pointer;
-  background:var(--surface);border:1px solid var(--line);border-radius:14px;
-  padding:10px 12px 11px 15px;color:var(--ink);font-family:var(--sans);
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:7px 8px 8px 13px;color:var(--ink);font-family:var(--sans);
   transition:background .16s ease-out,transform .16s ease-out}
 .sess:active{background:var(--surface-hi);transform:scale(.995)}
-.sess .rib{position:absolute;left:0;top:10px;bottom:10px;width:4px;border-radius:4px}
+.sess .rib{position:absolute;left:0;top:8px;bottom:8px;width:4px;border-radius:4px}
 .line1{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.1em;color:var(--mut)}
 .prio{font-weight:700;font-size:10px;letter-spacing:.06em;padding:1px 5px;border-radius:5px;
   background:var(--surface-hi);color:var(--mut);border:1px solid var(--line)}
@@ -73,46 +75,48 @@ h1{font-family:var(--serif-display);font-style:italic;font-weight:600;font-size:
 .shield{color:var(--info)}
 .tag{color:var(--warn);letter-spacing:.06em;text-transform:uppercase;font-size:9.5px}
 .stitle{display:block;font-family:var(--serif-display);font-style:italic;font-weight:500;
-  font-size:17px;line-height:1.25;margin-top:5px}
+  font-size:15.5px;line-height:1.25;margin-top:2px;padding-right:6px}
 .sess.struck{opacity:.5}
 .sess.struck .stitle{text-decoration:line-through}
-.zstrip{display:flex;gap:2px;margin-top:8px;height:9px}
+.zstrip{display:flex;gap:2px;margin-top:6px;height:6px}
+.sess .zstrip b{display:none}   /* Z-etiketter bor i veckoremsan och passdetaljen */
 .zstrip i{border-radius:3px;position:relative}
 .zstrip b{position:absolute;inset:0;font-size:7.5px;line-height:9px;text-align:center;
   color:#0A0A0D;font-weight:700;letter-spacing:0}
 
 /* Placeringsläge */
-.banner{margin-top:14px;padding:11px 13px;border-radius:14px;background:var(--surface-hi);
+.banner{margin:0 0 10px;padding:11px 13px;border-radius:14px;background:var(--surface-hi);
   border:1px solid var(--line);font-size:13px}
+.banner.sticky{position:sticky;top:8px;z-index:15;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.target{width:100%;min-height:44px;margin-top:6px;border:1px dashed var(--accent);border-radius:12px;
+  background:rgba(232,99,44,.06);color:var(--accent);font:600 11px/1 var(--sans);
+  letter-spacing:.14em;text-transform:uppercase;cursor:pointer}
+.target:active{background:rgba(232,99,44,.14)}
+.fab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:25;
+  min-width:44px;min-height:44px;padding:0 16px;border-radius:22px;border:1px solid var(--line);
+  background:var(--surface-hi);color:var(--ink);font:600 12px/1 var(--sans);cursor:pointer;
+  box-shadow:0 10px 26px rgba(0,0,0,.5)}
 .banner b{font-family:var(--serif-display);font-style:italic;font-weight:600}
 .txtbtn{background:none;border:0;color:var(--accent);font:inherit;cursor:pointer;
   margin-left:8px;padding:6px 2px;min-height:32px}
-/* Släppytor */
-.slot.droppable{border-radius:14px;transition:background .16s ease-out}
-.slot.droppable .sessions .empty{min-height:44px;display:flex;align-items:center;justify-content:center;
-  border:1px dashed var(--line);border-radius:14px;color:var(--faint);
-  font:600 10px/1 var(--sans);letter-spacing:.16em;text-transform:uppercase}
-.slot.droppable.offsched .sessions .empty{border-style:dotted}
-.slot.hot .sessions .empty{border-color:var(--accent);border-style:solid;color:var(--accent);
-  background:rgba(232,99,44,.10)}
-.slot.hot .wchip{color:var(--accent)}
-.day.open{background:var(--surface-lo);border-radius:16px;padding:12px 10px;margin:2px -10px}
-.day.open .dslots{animation:open .18s ease-out}
-.week.dragging .sess{opacity:.55;transition:opacity .16s ease-out}
-.week.dragging .day.open .sess{opacity:.8}
+/* Släppmål: dagen (beslut A) */
+.day.hot{background:var(--surface-lo);box-shadow:inset 3px 0 0 var(--accent);
+  padding-left:10px;margin-left:-10px;padding-right:10px;margin-right:-10px}
+.day.hot .dname{color:var(--accent)}
 body.nodrag{user-select:none;-webkit-user-select:none;overflow-anchor:none}
 .ghost{position:fixed;left:0;top:0;z-index:60;pointer-events:none;
   background:var(--surface-hi);border:1px solid var(--accent);border-radius:14px;
   padding:10px 12px 11px 15px;box-shadow:0 18px 40px rgba(0,0,0,.55);
   margin:-26px 0 0 -40px;transform-origin:20% 50%;rotate:-1.2deg}
 .ghost .rib{display:none}.ghost .zstrip{opacity:.9}
-.grip{color:var(--faint);font-size:13px;letter-spacing:-.1em;padding:0 2px;cursor:grab;
-  touch-action:none;line-height:1}
+.grip{color:var(--faint);font-size:14px;letter-spacing:-.1em;cursor:grab;touch-action:none;
+  width:44px;height:44px;display:flex;align-items:center;justify-content:center;
+  margin:-13px -10px -13px -6px}   /* 44 px träffyta (§9) utan att kortet växer */
 .sess:hover .grip{color:var(--accent)}
 .sess{touch-action:pan-y}
 
 /* Meny för oplacerade pass */
-.menu{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+.menu{margin-top:14px;padding:12px;border:1px dashed var(--line);border-radius:14px;background:var(--surface-lo)}
 .menu .sess{margin-top:8px}
 .hint{color:var(--faint);font-size:12px;margin-top:6px;font-family:var(--serif-text)}
 
@@ -129,7 +133,7 @@ body.nodrag{user-select:none;-webkit-user-select:none;overflow-anchor:none}
   background:var(--surface-hi);color:var(--ink);font:600 13px/1 var(--sans);cursor:pointer}
 .acts button:first-child{background:var(--accent);border-color:var(--accent);color:#14060099}
 .acts button:first-child{color:#1A0A03}
-.acts .ghost{background:none;color:var(--mut)}
+.acts .ghostbtn{background:none;color:var(--mut)}
 
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom));
   background:var(--surface-hi);border:1px solid var(--line);border-radius:12px;padding:10px 14px;

@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.4.0 · 2026-08-02";
+export const BUILD = "next-0.5.0 · 2026-08-02";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -62,8 +62,10 @@ export function matchDate(startLocal) {
 export function effectiveSession(src, ov) {
   const s = { ...src };
   if (!ov) return s;
-  if (ov.moved) { s.week = ov.moved.week ?? s.week; s.day = ov.moved.day ?? s.day; s.slot = ov.moved.slot ?? s.slot; }
-  if (ov.placed) { s.week = ov.placed.week ?? s.week; s.day = ov.placed.day ?? s.day; s.slot = ov.placed.slot ?? s.slot; }
+  if (ov.moved) { s.week = ov.moved.week ?? s.week; s.day = ov.moved.day ?? s.day;
+    if ("slot" in ov.moved) s.slot = ov.moved.slot ?? undefined; }   /* null = förslaget nollställt (beslut A) */
+  if (ov.placed) { s.week = ov.placed.week ?? s.week; s.day = ov.placed.day ?? s.day;
+    if ("slot" in ov.placed) s.slot = ov.placed.slot ?? undefined; }
   if (ov.adjust) {
     if (ov.adjust.durationMin) s.durationMin = ov.adjust.durationMin;
     if (ov.adjust.sport) s.sport = ov.adjust.sport;            /* substitute */
@@ -306,9 +308,9 @@ function sessionInSpan(plan, s, from, to) {          /* oplacerat pass: veckan �
 }
 function slotClock(plan, s) {                        /* nominell absoluttid i timmar, eller null */
   const d = sessionDate(plan, s);
-  if (!d || !s.slot) return null;
-  return Date.parse(d + "T00:00:00Z") / 3600000 + ENGINE.slotHour[s.slot];
-}
+  if (!d) return null;
+  return Date.parse(d + "T00:00:00Z") / 3600000 + (s.slot ? ENGINE.slotHour[s.slot] : 12);
+}                                                      /* fönsterlöst pass räknas mitt på dagen (beslut A) */
 export function hoursBetween(plan, a, b) {
   const ha = slotClock(plan, a), hb = slotClock(plan, b);
   return ha == null || hb == null ? null : Math.abs(ha - hb);
@@ -454,36 +456,24 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     }
   }
 
-  /* missed-A / missed-B — trigger manual (spec 1 §6) */
-  const occupied = (week, day, slot, exceptId) =>
-    list().some(x => x.id !== exceptId && x.status !== "struck" &&
-                     x.week === week && x.day === day && x.slot === slot);
-
+  /* missed-A / missed-B — trigger manual (spec 1 §6, K4 dagbaserad rev 0.5.0):
+     dagar är inte exklusiva, så ingen B-slot-fallback behövs — A flyttar till
+     nästa schemadag som klarar D3-grinden, annars strykning (H2). */
   const findMoveTarget = (s) => {
     const sched = bindings.schedule ?? {};
-    const cands = [];
-    for (let day = (s.day ?? -1) + 1; day <= 6; day++)
-      for (const slot of (sched[day] ?? []))
-        if (!occupied(s.week, day, slot, s.id) && !(day === s.day && slot === s.slot))
-          cands.push({ week: s.week, day, slot });
-    /* D3-grinden: kvalitetspass måste hamna ≥ 1 dygn (24 h) från närmaste andra kvalitetspass */
-    const gate = (c) => {
+    const days = Object.keys(sched).map(Number)
+      .filter(d => (sched[d] ?? []).length).sort((a, b) => a - b);
+    const gate = (day) => {
       if (!isQuality(s)) return true;
-      const probe = { ...s, ...c };
+      const probe = { ...s, day, slot: null };
       return list().every(x => {
         if (x.id === s.id || x.status === "struck" || !isQuality(x)) return true;
         const h = hoursBetween(plan, probe, x);
         return h == null || h >= 24;
       });
     };
-    for (const c of cands) if (gate(c)) return { target: c };
-    /* fallback: ta ett B-pass slot (ej protected) — B:t stryks */
-    for (const b of list()) {
-      if (b.prio !== "B" || b.protected || b.status === "struck" || b.week !== s.week ||
-          b.day == null || !b.slot) continue;
-      if (gate({ week: b.week, day: b.day, slot: b.slot }))
-        return { target: { week: b.week, day: b.day, slot: b.slot }, takeB: b.id };
-    }
+    for (const day of days)
+      if (day > (s.day ?? -1) && gate(day)) return { week: s.week, day, slot: null };
     return null;
   };
 
@@ -499,18 +489,12 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
                       {}, { status: s.status ?? "planned" })) s.status = "struck";
       continue;
     }
-    /* missed-A: move → (B-slot) → strike, med D3/H2/H3 */
+    /* missed-A: move → strike, med D3/H2 (dagbaserad K4) */
     const found = findMoveTarget(s);
     if (found) {
-      if (found.takeB) {
-        const b = work[found.takeB];
-        if (push("missed-A", 2, b.id, "strike",
-                 "A-passet tar B-passets slot. B jagas inte ikapp.",
-                 {}, { status: b.status ?? "planned" })) b.status = "struck";
-      }
       if (push("missed-A", 2, s.id, "move",
-               `Missat A-pass flyttas till ${DAYNAMES[found.target.day]} ${found.target.slot}.`,
-               found.target, { week: s.week, day: s.day, slot: s.slot })) Object.assign(s, found.target);
+               `Missat A-pass flyttas till ${DAYNAMES[found.day]}.`,
+               found, { week: s.week, day: s.day, slot: s.slot ?? null })) Object.assign(s, found);
     } else if (push("missed-A", 2, s.id, "strike",
                     "Ingen ledig slot utan kvalitetskonflikt (H2/D3) — passet stryks i stället för att flyttas.",
                     {}, { status: s.status ?? "planned" })) s.status = "struck";
@@ -852,22 +836,15 @@ export function weekView(plan, overlay, weekNo, bindings = {}) {
     .map(s => ({ ...effectiveSession(s, ov.sessions?.[s.id]), _src: s }))
     .filter(s => s.week === weekNo);
 
-  const sched = bindings.schedule ?? {};
   const days = dates.map((date, day) => {
-    const here = eff.filter(s => s.day === day && s.slot);
-    const slots = [...new Set([...(sched[day] ?? []), ...here.map(s => s.slot)])]
-      .sort((a, b) => SLOTORD[a] - SLOTORD[b])
-      .map(slot => ({
-        slot,
-        scheduled: (sched[day] ?? []).includes(slot),
-        sessions: here.filter(s => s.slot === slot)
-                      .sort((a, b) => PRIOS.indexOf(a.prio) - PRIOS.indexOf(b.prio) || a.id.localeCompare(b.id))
-      }));
-    return { day, date, label: DAYLABEL[day], slots,
+    const here = eff.filter(s => s.day === day)
+      .sort((a, b) => (SLOTORD[a.slot] ?? 9) - (SLOTORD[b.slot] ?? 9)
+                   || PRIOS.indexOf(a.prio) - PRIOS.indexOf(b.prio) || a.id.localeCompare(b.id));
+    return { day, date, label: DAYLABEL[day], sessions: here,
              minutes: here.filter(s => s.status !== "struck").reduce((n, s) => n + (s.durationMin || 0), 0) };
   });
 
-  const unplaced = eff.filter(s => s.day == null || !s.slot)
+  const unplaced = eff.filter(s => s.day == null)
                       .sort((a, b) => PRIOS.indexOf(a.prio) - PRIOS.indexOf(b.prio) || a.id.localeCompare(b.id));
 
   const live = eff.filter(s => s.status !== "struck");
@@ -905,12 +882,12 @@ export function manualAdjust(plan, overlay, id, action, payload = {}, now = "") 
 
   switch (action) {
     case "move": case "place": {
-      const t = { week: payload.week ?? cur.week, day: payload.day, slot: payload.slot };
-      if (!WINDOWS.includes(t.slot) || !(t.day >= 0 && t.day <= 6))
+      const t = { week: payload.week ?? cur.week, day: payload.day, slot: payload.slot ?? null };
+      if (!(t.day >= 0 && t.day <= 6) || (t.slot != null && !WINDOWS.includes(t.slot)))
         return { overlay: overlay ?? emptyOverlay(), error: `ogiltigt mål: ${t.day}/${t.slot}` };
-      const menu = src.day == null || !src.slot;              /* menypass ⇒ placed, övriga ⇒ moved */
+      const menu = src.day == null;                           /* menypass ⇒ placed, övriga ⇒ moved */
       if (menu) { so.placed = t; out.placed[id] = t; } else so.moved = t;
-      why = `${menu ? "Placerat" : "Flyttat"} till ${DAYLABEL[t.day]} ${t.slot}.`;
+      why = `${menu ? "Placerat" : "Flyttat"} till ${DAYLABEL[t.day]}${t.slot ? " " + t.slot : ""}.`;
       break;
     }
     case "unplace":
@@ -953,7 +930,9 @@ export function manualAdjust(plan, overlay, id, action, payload = {}, now = "") 
 
 export const DRAG = {
   holdMs: 220,        /* långtryck innan drag armeras (touch) */
-  moveTol: 8,         /* rörelse före armering = skroll, inte drag */
+  moveTol: 14,        /* rörelse före armering = skroll, inte drag */
+  tapMs: 300,         /* upp inom denna tid + tapDist ⇒ tryck trots glid */
+  tapDist: 20,        /* fingerglid som fortfarande är ett tryck */
   weekDwellMs: 500,   /* håll över veckopilen ⇒ byt vecka, draget lever vidare */
   edgePx: 96,         /* autoskrollzon vid skärmkant */
   edgeStep: 14        /* px per bildruta i autoskroll */
@@ -989,24 +968,34 @@ export function dragReduce(state = dragIdle, ev = {}) {
   const s = { ...dragIdle, ...state };
   switch (ev.type) {
     case "down":
-      return { ...dragIdle, phase: "armed", id: ev.id, x: ev.x, y: ev.y, t0: ev.t ?? 0,
-               grip: !!ev.grip, week: ev.week ?? null };
+      return { ...dragIdle, phase: "armed", id: ev.id, x: ev.x, y: ev.y, sx: ev.x, sy: ev.y,
+               t0: ev.t ?? 0, grip: !!ev.grip, week: ev.week ?? null };
     case "hold":
-      return s.phase === "armed" ? { ...s, phase: "drag" } : s;
+      return s.phase === "armed" ? { ...s, phase: "drag" } : s;   /* slop drar aldrig */
     case "move":
       if (s.phase === "armed") {
         if (s.grip) return { ...s, phase: "drag", x: ev.x, y: ev.y };       /* greppet drar direkt */
-        return Math.hypot(ev.x - s.x, ev.y - s.y) > DRAG.moveTol ? { ...dragIdle } : s;
+        return Math.hypot(ev.x - s.sx, ev.y - s.sy) > DRAG.moveTol
+          ? { ...s, phase: "slop", x: ev.x, y: ev.y }             /* troligen skroll — men döm inte än */
+          : s;
       }
-      return s.phase === "drag" ? { ...s, x: ev.x, y: ev.y } : s;
+      if (s.phase === "slop" || s.phase === "drag") return { ...s, x: ev.x, y: ev.y };
+      return s;
     case "over":
-      return s.phase === "drag" ? { ...s, day: ev.day ?? null, slot: ev.slot ?? null } : s;
+      return s.phase === "drag"
+        ? { ...s, week: ev.week ?? s.week, day: ev.day ?? null, slot: ev.slot ?? null } : s;
     case "week":
       return s.phase === "drag" ? { ...s, week: ev.week, day: null, slot: null } : s;
     case "up":
-      if (s.phase !== "drag") return { ...dragIdle, tap: s.phase === "armed" ? s.id : null };
-      return s.slot != null && s.day != null
-        ? { ...dragIdle, drop: { id: s.id, week: s.week, day: s.day, slot: s.slot } }
+      if (s.phase === "armed") return { ...dragIdle, tap: s.id };
+      if (s.phase === "slop") {                                   /* glidande tryck är ändå ett tryck */
+        const quick = (ev.t ?? Infinity) - s.t0 < DRAG.tapMs;
+        const near = Math.hypot(s.x - s.sx, s.y - s.sy) < DRAG.tapDist;
+        return quick && near ? { ...dragIdle, tap: s.id } : { ...dragIdle };
+      }
+      if (s.phase !== "drag") return { ...dragIdle };
+      return s.day != null
+        ? { ...dragIdle, drop: { id: s.id, week: s.week, day: s.day, slot: s.slot ?? null } }
         : { ...dragIdle, cancelled: true };
     case "cancel":
       return { ...dragIdle, cancelled: s.phase === "drag" };

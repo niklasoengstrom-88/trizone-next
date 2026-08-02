@@ -164,9 +164,9 @@ eq(sessionDate(plan, plan.sessions[5]), null, "sessionDate: oplacerat menypass s
   const r = applyRules(plan, ov, B, flags, NOW);
   eq(A(r,"mode-vacation","shorten").map(a=>[a.session,a.payload.durationMin]),
      [["sk-w43-run-thr",35]], "T3-1: semesterveckans A till underhållsdos (56→35)");
-  eq(A(r,"missed-A","move","sk-w42-run-thr")[0]?.payload, {week:42,day:4,slot:"Morgon"},
-     "T3-1: missat A flyttas till nästa lediga slot i egen vecka");
-  eq(A(r,"missed-A","move","sk-w44-bike-ftp")[0]?.payload, {week:44,day:3,slot:"Kväll"},
+  eq(A(r,"missed-A","move","sk-w42-run-thr")[0]?.payload, {week:42,day:4,slot:null},
+     "T3-1: missat A flyttas till nästa schemadag i egen vecka — utan fönstertvång");
+  eq(A(r,"missed-A","move","sk-w44-bike-ftp")[0]?.payload, {week:44,day:3,slot:null},
      "T3-1: andra missade A flyttas i sin vecka");
   ok(A(r,"missed-A","move").every(a=>a.orig.slot), "missed-A: move bär ursprungsläget"); }
 
@@ -183,12 +183,15 @@ const synth = { formatVersion:1, planVersion:"2026-07-31.1", blocks:[{id:"x",sta
   ok(st[0].why.includes("H2"), "H2: strykningen förklarar varför flytten uteblev");
   ok(!A(r,"missed-A","move").length, "D3: ingen tyst flytt in i kvalitetskonflikt"); }
 
-/* ---------- missed-A: B-slot-fallback ---------- */
+/* ---------- missed-A: dagar är inte exklusiva (K4-rev 0.5.0) ---------- */
 { const p2 = structuredClone(synth);
-  p2.sessions[1] = {id:"b1", week:42, day:4, slot:"Kväll", sport:"swim", prio:"B", durationMin:40, profile:[[1,10],[2,30]]};
-  const r = applyRules(p2, {}, { schedule:{} }, [{id:"missed", source:"manual", sessionId:"q1"}], NOW);
-  eq(A(r,"missed-A","move","q1")[0]?.payload, {week:42,day:4,slot:"Kväll"}, "missed-A: tar B-passets slot när schemat är fullt");
-  eq(A(r,"missed-A","strike","b1").length, 1, "missed-A: B:t som lämnar plats stryks — jagas inte ikapp"); }
+  p2.sessions[1] = {id:"b1", week:42, day:5, slot:"Kväll", sport:"swim", prio:"B", durationMin:40, profile:[[1,10],[2,30]]};
+  const r = applyRules(p2, {}, { schedule:{5:["Kväll"]} }, [{id:"missed", source:"manual", sessionId:"q1"}], NOW);
+  eq(A(r,"missed-A","move","q1")[0]?.payload, {week:42,day:5,slot:null},
+     "K4-rev: A flyttar till en dag som redan har pass — dagen är ingen exklusiv slot");
+  eq(A(r,"missed-A","strike","b1").length, 0, "K4-rev: inget B stryks för att bereda plats");
+  const r2 = applyRules(p2, {}, { schedule:{} }, [{id:"missed", source:"manual", sessionId:"q1"}], NOW);
+  eq(A(r2,"missed-A","strike","q1").length, 1, "tomt livsschema ⇒ ingen flyttkandidat ⇒ strykning"); }
 
 /* ---------- missed-B / protected / C ---------- */
 { const r = applyRules(plan, {}, B, [
@@ -204,7 +207,7 @@ const synth = { formatVersion:1, planVersion:"2026-07-31.1", blocks:[{id:"x",sta
   const r = applyRules(plan, ov, B, [{id:"missed", source:"manual", sessionId:"sk-w42-run-thr"}], NOW);
   eq(A(r,"tissue-freeze","substitute","sk-w42-run-thr")[0]?.payload.sport, "bike",
      "T3-4: nivå 1 vinner — passet ersätts, fryses ur löpning");
-  eq(A(r,"missed-A","move","sk-w42-run-thr")[0]?.payload, {week:42,day:4,slot:"Morgon"},
+  eq(A(r,"missed-A","move","sk-w42-run-thr")[0]?.payload, {week:42,day:4,slot:null},
      "normerande exemplet: strukturregeln tillämpas därefter på ersättningspasset"); }
 { const ov = { modes:{ active:[ mode("illness-stop","2026-10-15","2026-10-15") ] } };
   const r = applyRules(plan, ov, B, [{id:"missed", source:"manual", sessionId:"sk-w42-run-thr"}], NOW);
@@ -474,8 +477,7 @@ function fakeStorage(limitBytes = Infinity, seed = {}) {
    ================================================================ */
 import { weekView, weekDates, planWeeks, manualAdjust, shortDate, DAYLABEL, WINDOWS } from "./core.js";
 
-const cell = (v, d, slot) => v.days[d].slots.find(s => s.slot === slot);
-const ids  = (v, d, slot) => (cell(v, d, slot)?.sessions ?? []).map(s => s.id);
+const ids = (v, d) => v.days[d].sessions.map(s => s.id);
 
 /* ---------- Grundlayout ---------- */
 { const v = weekView(plan, {}, 42, B);
@@ -483,51 +485,51 @@ const ids  = (v, d, slot) => (cell(v, d, slot)?.sessions ?? []).map(s => s.id);
   eq(v.days.length, 7, "veckan har sju dagrader — även tomma");
   eq(v.days.map(d => d.label), DAYLABEL, "dagrader i veckoordning mån→sön");
   eq(shortDate("2026-10-15"), "15 okt", "datumetikett kort och svensk");
-  ok(v.days.every(d => d.slots.every(s => WINDOWS.includes(s.slot))), "endast kända tidsfönster renderas");
-  ok(v.days[2].slots.map(s => s.slot).join() === "Kväll", "slots visas i fönsterordning");
+  ok(v.days[2].sessions[0].slot === "Kväll", "planens fönsterförslag följer med som metadata på passet");
   eq(v.week.type, "normal", "veckotypen följer med (styr uttryck i vyn)"); }
 
 /* ---------- Pass hamnar rätt, pass-par staplas ---------- */
 { const v = weekView(plan, {}, 42, B);
-  eq(ids(v, 3, "Kväll"), ["sk-w42-run-thr"], "passet ligger i sin dag och sitt fönster");
-  eq(ids(v, 1, "Lunch"), ["sk-w42-swim-css"], "lunchpasset hamnar i lunchfönstret");
-  const { overlay } = manualAdjust(plan, {}, "sk-w42-swim-ow", "place", { day: 5, slot: "Morgon" }, NOW);
-  const par = cell(weekView(plan, overlay, 42, B), 5, "Morgon");
-  eq(par.sessions.map(s => s.id), ["sk-w42-bike-long", "sk-w42-swim-ow"],
-     "S4: pass-par staplas i samma fönster, A före C"); }
+  eq(ids(v, 3), ["sk-w42-run-thr"], "passet ligger i sin dag");
+  eq(ids(v, 1), ["sk-w42-swim-css"], "tisdagens pass ligger på tisdagen");
+  const { overlay } = manualAdjust(plan, {}, "sk-w42-swim-ow", "place", { day: 5 }, NOW);
+  eq(ids(weekView(plan, overlay, 42, B), 5), ["sk-w42-bike-long", "sk-w42-swim-ow"],
+     "S4-rev: pass-par staplas i dagen — fönstrat pass före fönsterlöst"); }
 
 /* ---------- Oplacerade pass blir meny (menymodellen) ---------- */
 { const v = weekView(plan, {}, 42, B);
   ok(v.unplaced.some(s => s.id === "sk-w42-swim-ow"), "oplacerat pass hamnar i menyn, inte i en dag");
-  ok(!v.days.flatMap(d => d.slots).flatMap(s => s.sessions).some(s => s.id === "sk-w42-swim-ow"),
+  ok(!v.days.flatMap(d => d.sessions).some(s => s.id === "sk-w42-swim-ow"),
      "oplacerat pass renderas aldrig som placerat");
   eq(v.summary.unplaced, v.unplaced.length, "sammanfattningen räknar menyn"); }
 
 /* ---------- Överlagring styr vyn, aldrig källan (F1) ---------- */
-{ const { overlay } = manualAdjust(plan, {}, "sk-w42-swim-ow", "place", { day: 4, slot: "Morgon" }, NOW);
+{ const { overlay } = manualAdjust(plan, {}, "sk-w42-swim-ow", "place", { day: 4 }, NOW);
   const v = weekView(plan, overlay, 42, B);
-  eq(ids(v, 4, "Morgon"), ["sk-w42-swim-ow"], "placering ur menyn syns i vyn");
+  eq(ids(v, 4), ["sk-w42-swim-ow"], "placering på dag räcker — inget fönster krävs (beslut A)");
   eq(v.unplaced.length, 0, "placerat pass lämnar menyn");
   eq(plan.sessions.find(s => s.id === "sk-w42-swim-ow").day, undefined, "F1: källplanen är orörd");
   ok(overlay.placed["sk-w42-swim-ow"], "menypass lagras som placed (planformat §5)"); }
-{ const { overlay } = manualAdjust(plan, {}, "sk-w42-run-thr", "move", { day: 4, slot: "Kväll" }, NOW);
+{ const { overlay } = manualAdjust(plan, {}, "sk-w42-run-thr", "move", { day: 4 }, NOW);
   const v = weekView(plan, overlay, 42, B);
-  eq(ids(v, 4, "Kväll"), ["sk-w42-run-thr"], "flyttat pass syns på nya platsen");
-  eq(ids(v, 3, "Kväll").length, 0, "flyttat pass lämnar gamla platsen");
+  eq(ids(v, 4), ["sk-w42-run-thr"], "flyttat pass syns på nya platsen");
+  eq(ids(v, 3).length, 0, "flyttat pass lämnar gamla platsen");
+  eq(v.days[4].sessions[0].slot, undefined,
+     "beslut A: användarens flytt nollställer planens fönsterförslag");
   ok(overlay.sessions["sk-w42-run-thr"].moved, "placerat pass som flyttas lagras som moved"); }
+{ const { overlay } = manualAdjust(plan, {}, "sk-w42-run-thr", "move", { day: 4, slot: "Morgon" }, NOW);
+  eq(weekView(plan, overlay, 42, B).days[4].sessions.find(s => s.id === "sk-w42-run-thr").slot, "Morgon",
+     "fönster kan fortfarande sättas uttryckligen — det är metadata, inte tvång"); }
 
-/* ---------- Fönster utanför livsschemat renderas ändå, men märks ---------- */
-{ const { overlay } = manualAdjust(plan, {}, "sk-w42-swim-ow", "place", { day: 0, slot: "Morgon" }, NOW);
-  const v = weekView(plan, overlay, 42, B);
-  const c = cell(v, 0, "Morgon");
-  ok(c && c.sessions.length === 1, "pass i ett fönster utanför schemat göms aldrig");
-  eq(c.scheduled, false, "fönstret märks som utanför livsschemat");
-  ok(cell(v, 0, "Kväll").scheduled, "schemalagda fönster märks som schemalagda"); }
+/* ---------- Alla dagar är likvärdiga mål (beslut A) ---------- */
+{ const { overlay } = manualAdjust(plan, {}, "sk-w42-swim-ow", "place", { day: 0 }, NOW);
+  eq(ids(weekView(plan, overlay, 42, B), 0), ["sk-w42-swim-ow"],
+     "placering på valfri dag — livsschemat framhäver, det spärrar aldrig"); }
 
 /* ---------- Manuell justering: hela §5d-listan ---------- */
 { const r = manualAdjust(plan, {}, "sk-w42-swim-css", "strike", {}, NOW);
   const v = weekView(plan, r.overlay, 42, B);
-  const s = v.days.flatMap(d => d.slots).flatMap(x => x.sessions).find(x => x.id === "sk-w42-swim-css");
+  const s = v.days.flatMap(d => d.sessions).find(x => x.id === "sk-w42-swim-css");
   eq(s.status, "struck", "struket pass ligger kvar i vyn, märkt — inte bortplockat");
   eq(v.summary.planned, weekView(plan, {}, 42, B).summary.planned - 1, "struket räknas inte som planerat");
   const back = manualAdjust(plan, r.overlay, "sk-w42-swim-css", "restore", {}, NOW).overlay;
@@ -545,13 +547,15 @@ const ids  = (v, d, slot) => (cell(v, d, slot)?.sessions ?? []).map(s => s.id);
   ok(manualAdjust(plan, {}, "sk-w42-run-thr", "explode", {}, NOW).error,
      "§5d: bara regelverkets åtgärdslista — ingen fri redigering");
   ok(manualAdjust(plan, {}, "finns-ej", "strike", {}, NOW).error, "okänt pass avvisas med rotorsak");
-  ok(manualAdjust(plan, {}, "sk-w42-run-thr", "move", { day: 9, slot: "Kväll" }, NOW).error,
-     "ogiltigt mål avvisas"); }
+  ok(manualAdjust(plan, {}, "sk-w42-run-thr", "move", { day: 9 }, NOW).error,
+     "ogiltig dag avvisas");
+  ok(manualAdjust(plan, {}, "sk-w42-run-thr", "move", { day: 2, slot: "Natt" }, NOW).error,
+     "okänt fönster avvisas — metadata valideras ändå"); }
 
 /* ---------- Handen vinner: manuell justering överlever lägesavaktivering ---------- */
 { const ov0 = { modes: { active: [ mode("mode-vacation", "2026-10-12", "2026-10-18") ] } };
   const ov1 = applyActions(ov0, applyRules(plan, ov0, B, [], NOW).actions);
-  const ov2 = manualAdjust(plan, ov1, "sk-w42-run-thr", "move", { day: 4, slot: "Morgon" }, "2026-10-14T10:00").overlay;
+  const ov2 = manualAdjust(plan, ov1, "sk-w42-run-thr", "move", { day: 4 }, "2026-10-14T10:00").overlay;
   const ov3 = deactivateMode(ov2, "mode-vacation@2026-10-12", "2026-10-19T08:00");
   eq(effectiveSession(plan.sessions[2], ov3.sessions["sk-w42-run-thr"]).day, 4,
      "§9: manuellt flyttat pass behåller användarens placering när läget släpper"); }
@@ -576,7 +580,7 @@ const ids  = (v, d, slot) => (cell(v, d, slot)?.sessions ?? []).map(s => s.id);
   const ov1 = applyActions({}, r.actions);
   const ov2 = manualAdjust(plan, ov1, "sk-w42-swim-css", "restore", {}, "2026-10-12T20:00").overlay;
   const v = weekView(plan, ov2, 42, B);
-  ok(v.days.flatMap(d => d.slots).flatMap(s => s.sessions).some(x => x.id === "sk-w42-swim-css" && !x.status),
+  ok(v.days.flatMap(d => d.sessions).some(x => x.id === "sk-w42-swim-css" && !x.status),
      "användaren kan häva motorns strykning — handen vinner");
   eq(ov2.sessions["sk-w42-swim-css"].events.map(e => e.rule), ["missed-B", "manual-restore"],
      "P3: motorns och handens poster ligger sida vid sida"); }
@@ -613,7 +617,15 @@ const seq = (...evs) => evs.reduce((st, e) => dragReduce(st, e), dragIdle);
   eq(s.phase, "armed", "nedtryck armerar, drar inte direkt");
   eq(dragReduce(s, { type:"hold" }).phase, "drag", "långtryck startar draget"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"move", x:10, y:60 });
-  eq(s.phase, "idle", "rörelse före långtryck är skroll — draget startar aldrig"); }
+  eq(s.phase, "slop", "stor rörelse före långtryck lutar åt skroll — draget startar aldrig");
+  eq(dragReduce(s, { type:"hold" }).phase, "slop", "långtryckstimern kan inte kapa en skroll");
+  ok(!dragReduce(s, { type:"up", t: 100 }).tap, "lång glidning ger varken drag eller tryck"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, t: 0 }, { type:"move", x:22, y:22 },
+                { type:"up", t: 120 });
+  eq(s.tap, "p1", "snabbt tryck med fingerglid är ett tryck — inte ett svalt klick (0.4.0-buggen)"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, t: 0 }, { type:"move", x:22, y:22 },
+                { type:"up", t: 900 });
+  ok(!s.tap, "långsam glidning utanför tryckfönstret är ingenting"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10, grip:true }, { type:"move", x:10, y:60 });
   eq(s.phase, "drag", "från greppet startar draget direkt, utan väntan"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"up" });
@@ -623,9 +635,12 @@ const seq = (...evs) => evs.reduce((st, e) => dragReduce(st, e), dragIdle);
                 { type:"over", day:3, slot:"Kväll" }, { type:"up" });
   eq(s.drop, { id:"p1", week:42, day:3, slot:"Kväll" }, "släpp på ett fönster ger en flytt");
   ok(!s.cancelled, "lyckat släpp är inte ett avbrott"); }
-{ const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"hold" },
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, week:42 }, { type:"hold" },
                 { type:"over", day:3, slot:null }, { type:"up" });
-  ok(s.cancelled && !s.drop, "släpp utan fönster flyttar ingenting — hellre avbrott än gissning"); }
+  eq(s.drop, { id:"p1", week:42, day:3, slot:null }, "beslut A: släpp på en dag räcker — fönster behövs inte"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"hold" },
+                { type:"over", day:null, slot:null }, { type:"up" });
+  ok(s.cancelled && !s.drop, "släpp utanför alla dagar flyttar ingenting — hellre avbrott än gissning"); }
 { const s = seq({ type:"down", id:"p1", x:10, y:10, week:42 }, { type:"hold" },
                 { type:"over", day:1, slot:"Lunch" }, { type:"week", week:43 },
                 { type:"over", day:5, slot:"Morgon" }, { type:"up" });
@@ -642,23 +657,23 @@ const seq = (...evs) => evs.reduce((st, e) => dragReduce(st, e), dragIdle);
 
 /* ---------- Droppen ger en giltig justering (kopplingen till §5d) ---------- */
 { const s = seq({ type:"down", id:"sk-w42-run-thr", x:1, y:1, week:42 }, { type:"hold" },
-                { type:"over", day:5, slot:"Kväll" }, { type:"up" });
+                { type:"over", day:5 }, { type:"up" });
   const r = manualAdjust(plan, {}, s.drop.id, "move", s.drop, NOW);
   ok(!r.error, "droppens nyttolast går rakt in i manuell justering");
-  eq(weekView(plan, r.overlay, 42, B).days[5].slots.find(x => x.slot === "Kväll").sessions[0].id,
-     "sk-w42-run-thr", "passet ligger där det släpptes"); }
+  eq(weekView(plan, r.overlay, 42, B).days[5].sessions.map(x => x.id),
+     ["sk-w42-bike-long", "sk-w42-run-thr"], "passet ligger där det släpptes, sida vid sida med dagens övriga"); }
 { const s = seq({ type:"down", id:"sk-w42-run-thr", x:1, y:1, week:42 }, { type:"hold" },
-                { type:"week", week:43 }, { type:"over", day:1, slot:"Lunch" }, { type:"up" });
+                { type:"over", week:43, day:1 }, { type:"up" });
   const r = manualAdjust(plan, {}, s.drop.id, "move", s.drop, NOW);
-  eq(weekView(plan, r.overlay, 43, B).days[1].slots.find(x => x.slot === "Lunch").sessions[0].id,
-     "sk-w42-run-thr", "pass går att dra till en annan vecka");
-  eq(weekView(plan, r.overlay, 42, B).days[3].slots.flatMap(x => x.sessions).length, 0,
-     "passet lämnar sin gamla vecka helt — fönstret står kvar tomt"); }
+  eq(weekView(plan, r.overlay, 43, B).days[1].sessions[0].id,
+     "sk-w42-run-thr", "pass går att dra till en annan vecka — over bär veckan i den löpande listan");
+  eq(weekView(plan, r.overlay, 42, B).days[3].sessions.length, 0,
+     "passet lämnar sin gamla vecka helt"); }
 
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 210;
+const EXPECTED_MIN = 216;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
