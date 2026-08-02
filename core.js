@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.6.0 · 2026-08-02";
+export const BUILD = "next-0.6.1 · 2026-08-02";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -735,20 +735,22 @@ export function resolveOrphan(ov, id, decision, now = "") {
 export function makeStore(storage) {
   let blocked = null;                     /* S2: trasig overlay spärrar skrivning tills beslut */
 
-  const report = () => {
+  const report = () => {                      /* räknar ALLA nycklar — kvoten gör det (0.6.1) */
     const keys = [];
     for (let i = 0; i < (storage.length ?? 0); i++) {
       const k = storage.key(i);
-      if (k?.startsWith("trizone.")) keys.push({ key: k, bytes: byteSize(storage.getItem(k)) });
+      if (k) keys.push({ key: k, bytes: byteSize(storage.getItem(k)),
+                         foreign: !k.startsWith("trizone.") });
     }
     keys.sort((a, b) => b.bytes - a.bytes);
-    return { keys, total: keys.reduce((s, k) => s + k.bytes, 0) };
+    return { keys, total: keys.reduce((s, k) => s + k.bytes, 0),
+             foreignBytes: keys.filter(k => k.foreign).reduce((s, k) => s + k.bytes, 0) };
   };
 
   const quotaMessage = (key, bytes) => {
     const r = report();
     const top = r.keys.filter(k => k.key !== key).slice(0, 2)
-      .map(k => `${k.key} ${kB(k.bytes)}`).join(", ");
+      .map(k => `${k.key}${k.foreign ? " (legacy)" : ""} ${kB(k.bytes)}`).join(", ");
     return `Lagringen är full — ${key} (${kB(bytes)}) kunde inte sparas och det gamla värdet står kvar. ` +
            `Störst just nu: ${top || "inget annat"}. Totalt ${kB(r.total)}. ` +
            `Rensa aktivitetscachen eller exportera säsongen i Profil.`;
@@ -1151,4 +1153,32 @@ export function dismissMatch(overlay, sessionId, activityId, now = "") {
   (so.events ??= []).push({ rule: "match-dismiss", session: sessionId, action: "warn",
     why: `Föreslagen länk till aktivitet ${activityId} avvisad — föreslås inte igen.`, t: now });
   return ov;
+}
+
+/* ================================================================
+   SÄKERHETSKOPIA (planformat P5, beslutslogg 2026-07-29)
+   Overlay + patchar via urklipp — samma buss som kontextexport och
+   veckopatch. Import validerar och stämmer av; trasig kopia
+   förklaras, importeras aldrig. Import är även räddningsvägen ur
+   en spärrad overlay (S2).
+   ================================================================ */
+export function backupExport(overlay, planVersion, now = "") {
+  return { kind: "trizone-next-backup", formatVersion: FORMAT_VERSION,
+           exported: now, planVersion: planVersion ?? overlay?.planVersion ?? null,
+           overlay: structuredClone(overlay ?? emptyOverlay()) };
+}
+
+export function backupImport(raw, plan, now = "") {
+  let b;
+  try { b = typeof raw === "string" ? JSON.parse(raw) : raw; }
+  catch (e) { return { errors: [`kopian går inte att läsa: ${e.message}`] }; }
+  if (b?.kind !== "trizone-next-backup")
+    return { errors: [`inte en TRIZONE Next-säkerhetskopia (kind: ${b?.kind ?? "saknas"})`] };
+  if (b.formatVersion !== FORMAT_VERSION)
+    return { errors: [`okänd formatversion: ${b.formatVersion} (stödd: ${FORMAT_VERSION})`] };
+  const v = validateOverlay(b.overlay);
+  if (!v.ok) return { errors: v.errors.map(e => `${e.where}: ${e.why}`) };
+  const rec = reconcileOverlay(b.overlay, plan, now);          /* föräldralösa listas, raderas aldrig */
+  return { overlay: rec.overlay, orphans: rec.orphans, errors: [],
+           exported: b.exported, planVersion: b.planVersion };
 }

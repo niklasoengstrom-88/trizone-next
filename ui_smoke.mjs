@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.6.0 · 2026-08-02
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.6.1 · 2026-08-02
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -12,7 +12,8 @@ const plan = JSON.parse(fs.readFileSync(new URL("./plan.json", import.meta.url))
 const WEEKS = [42, 43, 44];
 const dayRect = (wi, d) => ({ left: 0, top: 100 + (wi * 7 + d) * 80, width: 360, height: 80 });
 const fakeEl = (dataset, rect) => ({ dataset, getBoundingClientRect: () => rect,
-  innerHTML: "", style: {}, remove() {}, classList: { add() {}, remove() {} } });
+  innerHTML: "", style: {}, remove() {}, click() {}, addEventListener() {},
+  classList: { add() {}, remove() {} } });
 
 const H = {};
 const mkRoot = () => ({
@@ -39,12 +40,16 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.6.0 · 2026-08-02" }),
+  querySelector: () => ({ content: "next-0.6.1 · 2026-08-02" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
 };
-Object.defineProperty(globalThis, "navigator", { value: {}, configurable: true });
+let clipped = null;
+const vibes = [];
+Object.defineProperty(globalThis, "navigator", {
+  value: { clipboard: { writeText: async t => { clipped = t; } },
+           vibrate: p => (vibes.push(p), true) }, configurable: true });
 globalThis.location = { protocol: "file:" };
 globalThis.fetch = async () => ({ json: async () => plan });
 globalThis.CSS = { escape: s => s };
@@ -71,7 +76,7 @@ const tapCard = (id, wk = 42) => { const t = target({ sess: id }, ["data-sess"],
 const clickBtn = dataset => fire("click", { target: target(dataset, Object.keys(dataset).map(k => "data-" + k)) });
 
 /* ---------- Löpande listan ---------- */
-has(els.diag.innerHTML, "next-0.6.0", "paritetskortet renderas");
+has(els.diag.innerHTML, "next-0.6.1", "paritetskortet renderas");
 has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
 has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
 has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
@@ -159,6 +164,13 @@ has(els.app.innerHTML, "Flyttat: fre v.43", "drag till en annan vecka i listan �
 { const m = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-run-thr"].moved;
   ok(m?.week === 43 && m.day === 4 && m.slot === null, "dragets flytt sparad utan fönstertvång");
 }
+/* ---------- Haptiken är en kodväg, inte en förhoppning (0.6.0-regressionen) ---------- */
+ok(vibes.includes(1), "haptiken primas i första pekargesten (Chrome-upplåsningen)");
+ok(vibes.includes(18), "armeringen vibrerar kännbart (≥ 12 ms)");
+ok(vibes.includes(12), "dagbyte ger tick — man känner hur långt passet rest");
+ok(vibes.some(v => Array.isArray(v) && v.length === 3), "släppet ger bekräftelsemönster");
+ok(vibes.every(v => Array.isArray(v) || v === 1 || v >= 12), "inga pulser under känseltröskeln kvar");
+
 const before = mem.get("trizone.overlay.v1");
 await drag("sk-w42-bike-long", 0, 1, { commit: false });
 ok(mem.get("trizone.overlay.v1") === before, "avbrutet drag lämnar overlayn orörd");
@@ -169,6 +181,18 @@ tapCard("sk-w42-swim-css"); clickBtn({ act: "strike" });
 has(els.app.innerHTML, "struket", "struket pass märks i vyn");
 tapCard("sk-w42-swim-css"); clickBtn({ act: "restore" });
 ok(!JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-swim-css"].status, "strykningen går att häva");
+
+/* ---------- Säkerhetskopia (0.6.1) ---------- */
+has(els.app.innerHTML, "Kopiera säkerhetskopia", "backup-knappen renderas");
+fire("click", { target: target({ backup: "" }, ["data-backup"]) });
+await new Promise(r => setTimeout(r, 10));
+ok(clipped && JSON.parse(clipped).kind === "trizone-next-backup", "kopian hamnar i urklipp");
+ok(JSON.parse(clipped).overlay.sessions, "kopian bär overlayn — inte bara konfiguration");
+fire("click", { target: target({ import: "" }, ["data-import"]) });
+has(els.app.innerHTML, "impbox", "importpanelen öppnas");
+els.impbox = { value: clipped };
+fire("click", { target: target({ importGo: "" }, ["data-import-go"]) });
+has(els.app.innerHTML, "Importerad", "rundturen export → import fungerar i vyn");
 
 console.log(`\n${pass}/${pass+fail} röktester gröna` + (fail ? ` — ${fail} RÖDA` : ""));
 process.exit(fail ? 1 : 0);

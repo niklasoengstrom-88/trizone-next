@@ -775,10 +775,75 @@ const act = (id, iso, sport, min, extra = {}) => ({
   eq(actZoneMinutes({ icu_hr_zone_times: [] }), null, "tom zondata ⇒ ingen remsa, ingen låtsasremsa");
   eq(actZoneMinutes({}), null, "saknad zondata ⇒ null"); }
 
+/* ================================================================
+   STÄDSESSION 0.6.1 — kvotrapport + säkerhetskopia (P5)
+   ================================================================ */
+import { backupExport, backupImport } from "./core.js";
+
+/* ---------- Kvotrapporten ser allt — även legacy ---------- */
+{ const st = makeStore(fakeStorage(1e6, {
+    "trizone.overlay.v1": JSON.stringify(emptyOverlay("x")),
+    "holmsjo.cfg": "y".repeat(4096) }));
+  const r = st.report();
+  ok(r.keys.some(k => k.key === "holmsjo.cfg" && k.foreign), "legacy-nycklar räknas och märks");
+  ok(r.total > 4096, "totalsiffran inkluderar legacy — kvoten gör det");
+  eq(r.foreignBytes, 4096, "legacy-andelen särredovisas"); }
+{ const st = makeStore(fakeStorage(4600, { "holmsjo.cfg": "y".repeat(4096) }));
+  const big = emptyOverlay("v1");
+  for (let i = 0; i < 30; i++) big.sessions["s" + i] = { status: "done" };
+  const r = st.saveOverlay(big);
+  ok(!r.ok && r.error.includes("holmsjo.cfg") && r.error.includes("legacy"),
+     "kvotmeddelandet pekar ut legacy-nyckeln som tar plats — inte osynlig längre"); }
+
+/* ---------- Säkerhetskopia: rundtur ---------- */
+{ const ov = manualAdjust(plan, {}, "sk-w42-run-thr", "move", { day: 4 }, NOW).overlay;
+  const b = backupExport(ov, plan.planVersion, NOW);
+  eq(b.kind, "trizone-next-backup", "kopian bär sin sort");
+  const r = backupImport(JSON.stringify(b), plan, NOW);
+  eq(r.errors, [], "giltig kopia importeras utan invändning");
+  eq(effectiveSession(plan.sessions[2], r.overlay.sessions["sk-w42-run-thr"]).day, 4,
+     "P5: placeringshistoriken överlever export → import");
+  ok(!Object.is(b.overlay, ov), "exporten är en kopia — aldrig en referens"); }
+
+/* ---------- Säkerhetskopia: vakter ---------- */
+{ ok(backupImport("{ trasig", plan, NOW).errors[0].includes("går inte att läsa"),
+     "trasig kopia förklaras, importeras aldrig");
+  ok(backupImport(JSON.stringify({ kind: "nagot-annat" }), plan, NOW).errors[0].includes("inte en TRIZONE"),
+     "främmande JSON avvisas på sort, inte på symptom");
+  ok(backupImport(JSON.stringify({ kind: "trizone-next-backup", formatVersion: 99,
+      overlay: emptyOverlay() }), plan, NOW).errors[0].includes("formatversion"),
+     "okänd formatversion avvisas");
+  ok(backupImport(JSON.stringify({ kind: "trizone-next-backup", formatVersion: 1,
+      overlay: { sessions: { a: { status: "hittepå" } } } }), plan, NOW).errors.length > 0,
+     "kopia med trasig overlay avvisas med rotorsak"); }
+{ const b = backupExport({ ...emptyOverlay("gammal"), sessions: { "finns-ej": { status: "done" } } }, "gammal", NOW);
+  const r = backupImport(JSON.stringify(b), plan, NOW);
+  eq(r.orphans.map(o => o.id), ["finns-ej"],
+     "kopia från äldre plan: okända pass blir föräldralösa — raderas aldrig tyst"); }
+
+/* ================================================================
+   STÄDSESSION 0.6.1 — kvotrapporten ser allt (legacy-hålet)
+   ================================================================ */
+/* ---------- Legacy-nycklar räknas (holmsjo-hålet) ---------- */
+{ const st = makeStore(fakeStorage(1e6, {
+    "trizone.overlay.v1": JSON.stringify(emptyOverlay("x")),
+    "holmsjo.cache": "z".repeat(4000) }));
+  const r = st.report();
+  eq(r.keys.length, 2, "kvotrapporten räknar alla nycklar — även legacy");
+  ok(r.keys.find(k => k.key === "holmsjo.cache").foreign, "främmande nycklar märks");
+  eq(r.foreignBytes, 4000, "legacy-kvoten redovisas separat"); }
+{ const st = makeStore(fakeStorage(4300, { "holmsjo.cache": "z".repeat(4000) }));
+  const big = emptyOverlay("v1");
+  for (let i = 0; i < 20; i++) big.sessions["s" + i] = { status: "done" };
+  const r = st.saveOverlay(big);
+  ok(!r.ok && r.error.includes("holmsjo.cache (legacy)"),
+     "kvotmeddelandet pekar ut legacy-nyckeln som äter platsen — inte längre osynlig"); }
+
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 251;
+const EXPECTED_MIN = 262;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

@@ -6,16 +6,16 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          manualAdjust, shortDate, DAYLABEL,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
-         actZoneMinutes, matchDate } from "./core.js";
+         actZoneMinutes, matchDate, backupExport, backupImport } from "./core.js";
 
-export const UI_BUILD = "next-0.6.0 · 2026-08-02";
+export const UI_BUILD = "next-0.6.1 · 2026-08-02";
 
 /* Livsschema: profildata (D7). Framhäver träningsdagar — spärrar aldrig placering. */
 const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
                                4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] } };
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
-            acts:[], mq:[], unplanned:[] };
+            acts:[], mq:[], unplanned:[], importOpen:false };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
     rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
@@ -33,7 +33,14 @@ const findSess = (id) => {
   }
   return null;
 };
-const buzz = ms => { try { navigator.vibrate?.(ms); } catch {} };
+/* Haptik (0.6.1). Två rotorsaker till 0.6.0-klagomålet åtgärdade:
+   (1) pulserna 4–10 ms låg under känseltröskeln på S25 — nu 12–45 ms;
+   (2) Chrome släpper bara igenom vibrate från timers (långtryckets armering)
+   om ett anrop redan skett inuti en pekargest — därför primas haptiken i
+   pointerdown. dag = tick per dagpassage; drop = bekräftelsemönster. */
+const HAPTIC = { prime: 1, arm: 18, day: 12, drop: [20, 30, 45], cancel: 8 };
+let buzzPrimed = false;
+const buzz = p => { try { navigator.vibrate?.(p); } catch {} };
 
 /* ---------- Delar ---------- */
 function zstrip(profile, big = false) {
@@ -133,6 +140,13 @@ function render() {
     }
     h.push(`</section>`);
   }
+  h.push(`<section class="backup"><div class="eyebrow">Säkerhetskopia</div>
+    <div class="acts"><button data-backup>Kopiera säkerhetskopia</button>
+    <button class="ghostbtn" data-import>Importera…</button></div>
+    ${S.importOpen ? `<textarea id="impbox" class="impbox" rows="4"
+        placeholder="Klistra in säkerhetskopian här"></textarea>
+      <div class="acts"><button data-import-go>Importera kopian</button></div>` : ""}
+  </section>`);
   h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
   if (S.sel) { const s = findSess(S.sel); if (s) h.push(sheet(s)); }
   if (S.note) h.push(`<div class="toast${S.note.bad ? " bad" : ""}">${esc(S.note.text)}</div>`);
@@ -245,7 +259,7 @@ function pointOver(x, y) {
     const [wk, day] = hit.slice(4).split("|").map(Number);
     if (D.week !== wk || D.day !== day) {
       D = dragReduce(D, { type: "over", week: wk, day });
-      setHot(zoneEls.get(hit)); buzz(4);
+      setHot(zoneEls.get(hit)); buzz(HAPTIC.day);
     }
   } else if (D.day != null) {
     D = dragReduce(D, { type: "over", day: null });
@@ -267,9 +281,10 @@ function endDrag(ev) {
     if (cur && cur.week === week && cur.day === day) {      /* släppt där det redan låg */
       D = dragIdle; render(); return;
     }
-    buzz(10);
+    buzz(HAPTIC.drop);
     moveTo(id, { week, day, slot: null }, `Flyttat: ${DAYLABEL[day]} v.${week}.`);
   } else if (D.cancelled) {
+    buzz(HAPTIC.cancel);
     S.note = { text: "Flytten avbröts — passet ligger kvar." };
   } else if (D.tap) {
     S.sel = D.tap;
@@ -287,6 +302,7 @@ function wire() {
     if (!card) return;
     const wk = Number(ev.target.closest(".wk")?.id?.slice(3) ?? S.week);
     const grip = ev.pointerType === "mouse";      /* mus drar direkt; finger kräver alltid långtryck */
+    if (!buzzPrimed) { buzz(HAPTIC.prime); buzzPrimed = true; }   /* lås upp haptiken i gesten */
     D = dragReduce(dragIdle, { type: "down", id: card.dataset.sess, x: ev.clientX, y: ev.clientY,
                                t: Date.now(), grip, week: wk });
     root.setPointerCapture?.(ev.pointerId);
@@ -294,7 +310,7 @@ function wire() {
     if (!grip) holdTimer = setTimeout(() => {
       if (D.phase !== "armed") return;
       D = dragReduce(D, { type: "hold" });
-      document.body.classList.add("nodrag"); buzz(8);
+      document.body.classList.add("nodrag"); buzz(HAPTIC.arm);
       makeGhost(D.id, D.x, D.y); measure(); pointOver(D.x, D.y);
     }, DRAG.holdMs);
   });
@@ -333,9 +349,31 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-import],[data-import-go]");
     if (!t) return;
     S.note = null;
+    if (t.dataset.backup != null) {
+      const json = JSON.stringify(backupExport(S.overlay, S.plan.planVersion, now()));
+      (navigator.clipboard?.writeText(json) ?? Promise.reject())
+        .then(() => { S.note = { text: `Säkerhetskopia i urklipp (${(json.length/1024).toFixed(1)} kB). Spara den någonstans varaktigt.` }; render(); })
+        .catch(() => { S.note = { text: "Urklipp nekades — kopian kunde inte kopieras.", bad: true }; render(); });
+      return;
+    }
+    if (t.dataset.import != null) { S.importOpen = !S.importOpen; render(); return; }
+    if (t.dataset.importGo != null) {
+      const raw = document.getElementById("impbox")?.value ?? "";
+      const r = backupImport(raw, S.plan, now());
+      if (r.errors.length) { S.note = { text: "Import avvisad: " + r.errors[0], bad: true }; render(); return; }
+      S.overlay = r.overlay;
+      S.store.unblock();                                   /* giltig kopia häver S2-spärren */
+      const w = S.store.saveOverlay(S.overlay, { force: true });
+      S.note = w.ok
+        ? { text: `Importerad (${r.exported?.slice(0,10) ?? "okänt datum"})`
+            + (r.orphans.length ? ` · ${r.orphans.length} föräldralösa väntar på beslut` : "") }
+        : { text: w.error, bad: true };
+      S.importOpen = false;
+      recomputeMatches(); render(); return;
+    }
     if (t.dataset.link) {
       const [sid, aid, sc] = t.dataset.link.split("|");
       S.overlay = applyMatchLinks(S.overlay, [{ sessionId: sid, activityId: Number(aid), score: Number(sc) }], "confirm", now());
@@ -417,6 +455,7 @@ async function boot() {
     const rep = S.store.report();
     row("lagring", l.blocked ? "SPÄRRAD — " + l.errors[0]
         : `${rep.keys.length} nycklar · ${(rep.total/1024).toFixed(1)} kB`
+          + (rep.foreignBytes ? ` (varav legacy ${(rep.foreignBytes/1024).toFixed(1)} kB)` : "")
           + (l.orphans?.length ? ` · ${l.orphans.length} föräldralösa väntar på beslut` : ""),
         l.blocked ? "bad" : "ok");
     const ws = planWeeks(S.plan);
