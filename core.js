@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.2.1 · 2026-08-02";
+export const BUILD = "next-0.3.0 · 2026-08-02";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -818,4 +818,129 @@ export function makeStore(storage) {
 
     unblock() { blocked = null; }
   };
+}
+
+/* ================================================================
+   VECKOVYN — layoutmatte som ren funktion (v29-lärdomen)
+   Designspråk S4: dagen är behållaren, fönstren är etiketter,
+   pass-par staplas. Ingen DOM här; ui.js renderar resultatet.
+   ================================================================ */
+
+export const DAYLABEL = ["mån", "tis", "ons", "tors", "fre", "lör", "sön"];
+const MONTHS = ["jan","feb","mar","apr","maj","jun","jul","aug","sep","okt","nov","dec"];
+export function weekDates(plan, weekNo) {
+  const wk = (plan?.weeks ?? []).find(w => w.week === weekNo);
+  const mon = wk && isoWeekMonday(wk.iso);
+  if (!mon) return [];
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(mon); d.setUTCDate(mon.getUTCDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+}
+export const shortDate = iso =>
+  iso ? `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]}` : "";
+
+/* weekView: (plan, overlay, weckNo, bindings) → renderbar veckostruktur.
+   Läser alltid källa + överlagring (F1). Pass som flyttats IN i veckan
+   följer med; pass som flyttats UT försvinner härifrån. */
+export function weekView(plan, overlay, weekNo, bindings = {}) {
+  const ov = overlay ?? {};
+  const dates = weekDates(plan, weekNo);
+  const week = (plan?.weeks ?? []).find(w => w.week === weekNo) ?? null;
+
+  const eff = (plan?.sessions ?? [])
+    .map(s => ({ ...effectiveSession(s, ov.sessions?.[s.id]), _src: s }))
+    .filter(s => s.week === weekNo);
+
+  const sched = bindings.schedule ?? {};
+  const days = dates.map((date, day) => {
+    const here = eff.filter(s => s.day === day && s.slot);
+    const slots = [...new Set([...(sched[day] ?? []), ...here.map(s => s.slot)])]
+      .sort((a, b) => SLOTORD[a] - SLOTORD[b])
+      .map(slot => ({
+        slot,
+        scheduled: (sched[day] ?? []).includes(slot),
+        sessions: here.filter(s => s.slot === slot)
+                      .sort((a, b) => PRIOS.indexOf(a.prio) - PRIOS.indexOf(b.prio) || a.id.localeCompare(b.id))
+      }));
+    return { day, date, label: DAYLABEL[day], slots,
+             minutes: here.filter(s => s.status !== "struck").reduce((n, s) => n + (s.durationMin || 0), 0) };
+  });
+
+  const unplaced = eff.filter(s => s.day == null || !s.slot)
+                      .sort((a, b) => PRIOS.indexOf(a.prio) - PRIOS.indexOf(b.prio) || a.id.localeCompare(b.id));
+
+  const live = eff.filter(s => s.status !== "struck");
+  const zones = live.reduce((acc, s) => zoneDist(s.profile).map((m, i) => acc[i] + m), [0,0,0,0,0]);
+  const total = zones.reduce((a, b) => a + b, 0);
+  return {
+    week, weekNo, days, unplaced,
+    summary: {
+      planned: live.length, struck: eff.length - live.length, unplaced: unplaced.length,
+      minutes: live.reduce((n, s) => n + (s.durationMin || 0), 0),
+      zones, lowMinutes: zones[0] + zones[1],
+      lowShare: total ? (zones[0] + zones[1]) / total : null   /* fönster = denna vecka (v28-regeln) */
+    }
+  };
+}
+
+/* Veckor som går att bläddra till, i planordning */
+export const planWeeks = plan => (plan?.weeks ?? []).map(w => w.week).sort((a, b) => a - b);
+
+/* ---------- Manuell justering (planformat §5d) ----------
+   Användarutlöst, begränsad till regelverkets åtgärdslista. Lagras som
+   overlay-event märkt "manual-*" ⇒ användarens hand vinner vid
+   lägesavaktivering (spec 1 §9, deactivateMode). Ren funktion. */
+const MANUAL = ["move", "place", "unplace", "strike", "restore", "shorten", "downgrade", "substitute"];
+
+export function manualAdjust(plan, overlay, id, action, payload = {}, now = "") {
+  if (!MANUAL.includes(action)) return { overlay: overlay ?? emptyOverlay(), error: `okänd åtgärd: ${action}` };
+  const src = (plan?.sessions ?? []).find(s => s.id === id);
+  if (!src) return { overlay: overlay ?? emptyOverlay(), error: `okänt pass: ${id}` };
+  const out = structuredClone(overlay ?? emptyOverlay(plan?.planVersion));
+  out.sessions ??= {}; out.placed ??= {};
+  const so = out.sessions[id] ??= {};
+  const cur = effectiveSession(src, so);
+  let why = "";
+
+  switch (action) {
+    case "move": case "place": {
+      const t = { week: payload.week ?? cur.week, day: payload.day, slot: payload.slot };
+      if (!WINDOWS.includes(t.slot) || !(t.day >= 0 && t.day <= 6))
+        return { overlay: overlay ?? emptyOverlay(), error: `ogiltigt mål: ${t.day}/${t.slot}` };
+      const menu = src.day == null || !src.slot;              /* menypass ⇒ placed, övriga ⇒ moved */
+      if (menu) { so.placed = t; out.placed[id] = t; } else so.moved = t;
+      why = `${menu ? "Placerat" : "Flyttat"} till ${DAYLABEL[t.day]} ${t.slot}.`;
+      break;
+    }
+    case "unplace":
+      delete so.placed; delete so.moved; delete out.placed[id];
+      why = "Tillbaka till veckans meny — oplacerat.";
+      break;
+    case "strike":
+      so.status = "struck";
+      why = payload.why ?? "Struket för hand. Jagas inte ikapp.";
+      break;
+    case "restore":
+      delete so.status;
+      why = "Strykning hävd.";
+      break;
+    case "shorten": {
+      const nd = Math.max(ENGINE.shortenFloorMin, Math.round((payload.durationMin ?? cur.durationMin) / 5) * 5);
+      so.adjust = { ...so.adjust, durationMin: nd, profile: scaleProfile(cur.profile, nd / cur.durationMin) };
+      why = `Kortat ${cur.durationMin} → ${nd} min.`;
+      break;
+    }
+    case "downgrade":
+      so.adjust = { ...so.adjust, profile: downgradeProfile(cur.profile) };
+      why = "Nedväxlat till Z2 för hand.";
+      break;
+    case "substitute":
+      if (!SPORTS.includes(payload.sport)) return { overlay: overlay ?? emptyOverlay(), error: `okänd gren: ${payload.sport}` };
+      so.adjust = { ...so.adjust, sport: payload.sport };
+      why = `Grenbyte ${cur.sport} → ${payload.sport}.`;
+      break;
+  }
+  (so.events ??= []).push({ rule: "manual-" + action, session: id, action, why, t: now });
+  return { overlay: out, why };
 }

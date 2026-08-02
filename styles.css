@@ -1,4 +1,4 @@
-/* TRIZONE Next — styles.css · BUILD next-0.2.1 · 2026-08-02
+/* TRIZONE Next — styles.css · BUILD next-0.3.0 · 2026-08-02
    Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
 :root{
   --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
@@ -27,3 +27,98 @@ h1{font-family:var(--serif-display);font-style:italic;font-weight:600;font-size:
 .kv .k{color:var(--faint)}.kv .v{color:var(--ink)}
 .kv .v.ok{color:var(--ok)}.kv .v.bad{color:var(--risk)}
 .wm{font-family:var(--wm);letter-spacing:.16em;font-size:13px}
+
+/* ---------- Veckovyn (designspråk S4, L1–L4) ---------- */
+.wknav{display:flex;align-items:center;gap:10px;margin-top:4px}
+.wkhead{flex:1;min-width:0}
+.wkhead h1{margin-top:2px}
+.nav{width:44px;height:44px;flex:none;border:1px solid var(--line);border-radius:14px;
+  background:var(--surface);color:var(--ink);font-size:20px;line-height:1;cursor:pointer}
+.nav:disabled{opacity:.32;cursor:default}
+.nav:not(:disabled):active{background:var(--surface-hi)}
+.focus{font-family:var(--serif-text);color:var(--mut);font-size:14.5px;margin-top:8px}
+.sums{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:12px;font-size:12.5px;color:var(--mut)}
+.sums b{color:var(--ink);font-weight:600}
+.sums .dim{color:var(--faint)}
+
+.week{margin-top:18px}
+.day{padding:12px 0;border-top:1px solid var(--line-soft)}
+.day.today .dname{color:var(--accent)}
+.dhead{display:flex;align-items:baseline;gap:9px}
+.dname{font-weight:600;font-size:12px;letter-spacing:.14em;text-transform:uppercase}
+.ddate{color:var(--faint);font-size:11.5px}
+.dmin{margin-left:auto;color:var(--faint);font-size:11.5px}
+.dslots{margin-top:8px;display:flex;flex-direction:column;gap:10px}
+.rest{color:var(--faint);font-size:12.5px;font-family:var(--serif-text);font-style:italic}
+.slot{display:flex;gap:10px;align-items:flex-start}
+.wchip{flex:none;min-width:58px;margin-top:8px;font-size:10px;font-weight:600;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--faint)}
+.slot.offsched .wchip{color:var(--warn);opacity:.85}
+.sessions{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+
+/* Passkort — L1: ram + yta reserverat för tappbara objekt */
+.sess{position:relative;display:block;width:100%;text-align:left;cursor:pointer;
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  padding:10px 12px 11px 15px;color:var(--ink);font-family:var(--sans);
+  transition:background .16s ease-out,transform .16s ease-out}
+.sess:active{background:var(--surface-hi);transform:scale(.995)}
+.sess .rib{position:absolute;left:0;top:10px;bottom:10px;width:4px;border-radius:4px}
+.line1{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.1em;color:var(--mut)}
+.prio{font-weight:700;font-size:10px;letter-spacing:.06em;padding:1px 5px;border-radius:5px;
+  background:var(--surface-hi);color:var(--mut);border:1px solid var(--line)}
+.prio.pA{color:var(--ink);border-color:var(--faint)}
+.prio.pC{opacity:.65}
+.lbl{font-weight:600}
+.dur{margin-left:auto;color:var(--faint);letter-spacing:0}
+.shield{color:var(--info)}
+.tag{color:var(--warn);letter-spacing:.06em;text-transform:uppercase;font-size:9.5px}
+.stitle{display:block;font-family:var(--serif-display);font-style:italic;font-weight:500;
+  font-size:17px;line-height:1.25;margin-top:5px}
+.sess.struck{opacity:.5}
+.sess.struck .stitle{text-decoration:line-through}
+.zstrip{display:flex;gap:2px;margin-top:8px;height:9px}
+.zstrip i{border-radius:3px;position:relative}
+.zstrip b{position:absolute;inset:0;font-size:7.5px;line-height:9px;text-align:center;
+  color:#0A0A0D;font-weight:700;letter-spacing:0}
+
+/* Placeringsläge */
+.banner{margin-top:14px;padding:11px 13px;border-radius:14px;background:var(--surface-hi);
+  border:1px solid var(--line);font-size:13px}
+.banner b{font-family:var(--serif-display);font-style:italic;font-weight:600}
+.txtbtn{background:none;border:0;color:var(--accent);font:inherit;cursor:pointer;
+  margin-left:8px;padding:6px 2px;min-height:32px}
+.target{width:100%;min-height:44px;border:1px dashed var(--accent);border-radius:14px;
+  background:rgba(232,99,44,.06);color:var(--accent);font:600 12px/1 var(--sans);
+  letter-spacing:.1em;text-transform:uppercase;cursor:pointer}
+.target:active{background:rgba(232,99,44,.14)}
+
+/* Meny för oplacerade pass */
+.menu{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+.menu .sess{margin-top:8px}
+.hint{color:var(--faint);font-size:12px;margin-top:6px;font-family:var(--serif-text)}
+
+/* Justeringspanel */
+.sheetwrap{position:fixed;inset:0;background:rgba(6,6,9,.62);display:flex;align-items:flex-end;
+  z-index:20;animation:fade .18s ease-out}
+.sheet{width:100%;max-width:640px;margin:0 auto;background:var(--surface);
+  border-top:1px solid var(--line);border-radius:20px 20px 0 0;padding:20px 18px calc(20px + env(safe-area-inset-bottom));
+  animation:rise .22s cubic-bezier(.2,.7,.25,1)}
+.sheet h2{font-family:var(--serif-display);font-style:italic;font-weight:600;font-size:24px;margin-top:6px}
+.sheet .serif{font-family:var(--serif-text);color:var(--mut);font-size:14px;margin-top:10px}
+.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.acts button{min-height:44px;padding:0 16px;border-radius:12px;border:1px solid var(--line);
+  background:var(--surface-hi);color:var(--ink);font:600 13px/1 var(--sans);cursor:pointer}
+.acts button:first-child{background:var(--accent);border-color:var(--accent);color:#14060099}
+.acts button:first-child{color:#1A0A03}
+.acts .ghost{background:none;color:var(--mut)}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom));
+  background:var(--surface-hi);border:1px solid var(--line);border-radius:12px;padding:10px 14px;
+  font-size:12.5px;max-width:calc(100% - 36px);z-index:30;animation:rise .18s ease-out}
+.toast.bad{border-color:var(--risk);color:var(--risk)}
+
+#diag{margin-top:26px;padding-top:14px;border-top:1px solid var(--line-soft);opacity:.75}
+button:focus-visible,.sess:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
