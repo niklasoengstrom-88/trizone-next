@@ -581,10 +581,84 @@ const ids  = (v, d, slot) => (cell(v, d, slot)?.sessions ?? []).map(s => s.id);
   eq(ov2.sessions["sk-w42-swim-css"].events.map(e => e.rule), ["missed-B", "manual-restore"],
      "P3: motorns och handens poster ligger sida vid sida"); }
 
+/* ================================================================
+   DRAGMASKINEN — geometri och tillstånd (v29: aldrig DOM-tur)
+   ================================================================ */
+import { hitTest, nearestZone, dragReduce, dragIdle, edgeScroll, DRAG } from "./core.js";
+
+const Z = [ { id:"d2", x:0, y:100, w:360, h:80 },
+            { id:"d2-Morgon", x:20, y:110, w:320, h:22 },
+            { id:"d2-Lunch",  x:20, y:134, w:320, h:22 },
+            { id:"d2-Kväll",  x:20, y:158, w:320, h:22 } ];
+
+/* ---------- Geometri ---------- */
+{ eq(hitTest(Z, 100, 120), "d2-Morgon", "träfftest: pekaren i morgonfönstret");
+  eq(hitTest(Z, 100, 165), "d2-Kväll", "träfftest: pekaren i kvällsfönstret");
+  eq(hitTest(Z, 5, 120), "d2", "träfftest: dagen träffas utanför fönsterremsan");
+  eq(hitTest(Z, 100, 400), null, "träfftest: utanför allt ger null, inte en gissning");
+  eq(hitTest([], 1, 1), null, "träfftest: tomma zoner kraschar inte");
+  eq(hitTest(Z, 20, 110), "d2-Morgon", "träfftest: övre vänstra hörnet ingår");
+  eq(hitTest(Z, 340, 110), "d2", "träfftest: högerkanten är exklusiv"); }
+{ eq(nearestZone(Z.slice(1), 100, 145), "d2-Lunch", "närmaste zon: släpp mellan fönster landar rätt");
+  eq(nearestZone(Z.slice(1), 100, 300), "d2-Kväll", "närmaste zon: släpp under dagen tar sista fönstret");
+  eq(nearestZone([], 1, 1), null, "närmaste zon: inga kandidater ger null"); }
+{ eq(edgeScroll(40, 800), -DRAG.edgeStep, "autoskroll uppåt nära övre kanten");
+  eq(edgeScroll(770, 800), DRAG.edgeStep, "autoskroll nedåt nära nedre kanten");
+  eq(edgeScroll(400, 800), 0, "ingen autoskroll mitt på skärmen"); }
+
+/* ---------- Tillståndsmaskinen ---------- */
+const seq = (...evs) => evs.reduce((st, e) => dragReduce(st, e), dragIdle);
+
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, t:0, week:42 });
+  eq(s.phase, "armed", "nedtryck armerar, drar inte direkt");
+  eq(dragReduce(s, { type:"hold" }).phase, "drag", "långtryck startar draget"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"move", x:10, y:60 });
+  eq(s.phase, "idle", "rörelse före långtryck är skroll — draget startar aldrig"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, grip:true }, { type:"move", x:10, y:60 });
+  eq(s.phase, "drag", "från greppet startar draget direkt, utan väntan"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"up" });
+  eq(s.tap, "p1", "kort tryck utan rörelse är ett tryck, inte ett drag");
+  eq(s.phase, "idle", "trycket lämnar maskinen i vila"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, week:42 }, { type:"hold" },
+                { type:"over", day:3, slot:"Kväll" }, { type:"up" });
+  eq(s.drop, { id:"p1", week:42, day:3, slot:"Kväll" }, "släpp på ett fönster ger en flytt");
+  ok(!s.cancelled, "lyckat släpp är inte ett avbrott"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"hold" },
+                { type:"over", day:3, slot:null }, { type:"up" });
+  ok(s.cancelled && !s.drop, "släpp utan fönster flyttar ingenting — hellre avbrott än gissning"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10, week:42 }, { type:"hold" },
+                { type:"over", day:1, slot:"Lunch" }, { type:"week", week:43 },
+                { type:"over", day:5, slot:"Morgon" }, { type:"up" });
+  eq(s.drop, { id:"p1", week:43, day:5, slot:"Morgon" }, "draget överlever veckobyte ⇒ flytt mellan veckor");
+  }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"hold" },
+                { type:"over", day:2, slot:"Kväll" }, { type:"cancel" });
+  ok(s.cancelled && !s.drop, "avbrott (Esc/pekare borta) släpper draget utan att ändra något"); }
+{ const s = seq({ type:"down", id:"p1", x:10, y:10 }, { type:"hold" }, { type:"move", x:44, y:300 });
+  eq([s.x, s.y], [44, 300], "draget följer pekaren"); }
+{ eq(dragReduce(dragIdle, { type:"over", day:1, slot:"Kväll" }).day, null,
+     "hovring utan pågående drag ändrar ingenting");
+  eq(dragReduce(dragIdle, { type:"fnord" }).phase, "idle", "okänd händelse lämnar tillståndet orört"); }
+
+/* ---------- Droppen ger en giltig justering (kopplingen till §5d) ---------- */
+{ const s = seq({ type:"down", id:"sk-w42-run-thr", x:1, y:1, week:42 }, { type:"hold" },
+                { type:"over", day:5, slot:"Kväll" }, { type:"up" });
+  const r = manualAdjust(plan, {}, s.drop.id, "move", s.drop, NOW);
+  ok(!r.error, "droppens nyttolast går rakt in i manuell justering");
+  eq(weekView(plan, r.overlay, 42, B).days[5].slots.find(x => x.slot === "Kväll").sessions[0].id,
+     "sk-w42-run-thr", "passet ligger där det släpptes"); }
+{ const s = seq({ type:"down", id:"sk-w42-run-thr", x:1, y:1, week:42 }, { type:"hold" },
+                { type:"week", week:43 }, { type:"over", day:1, slot:"Lunch" }, { type:"up" });
+  const r = manualAdjust(plan, {}, s.drop.id, "move", s.drop, NOW);
+  eq(weekView(plan, r.overlay, 43, B).days[1].slots.find(x => x.slot === "Lunch").sessions[0].id,
+     "sk-w42-run-thr", "pass går att dra till en annan vecka");
+  eq(weekView(plan, r.overlay, 42, B).days[3].slots.flatMap(x => x.sessions).length, 0,
+     "passet lämnar sin gamla vecka helt — fönstret står kvar tomt"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 182;
+const EXPECTED_MIN = 210;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.3.0 · 2026-08-02";
+export const BUILD = "next-0.4.0 · 2026-08-02";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -943,4 +943,81 @@ export function manualAdjust(plan, overlay, id, action, payload = {}, now = "") 
   }
   (so.events ??= []).push({ rule: "manual-" + action, session: id, action, why, t: now });
   return { overlay: out, why };
+}
+
+/* ================================================================
+   DRAGMASKINEN — direktmanipulation som ren logik (v29-principen)
+   Geometri och tillståndsövergångar testas i Node; ui.js gör bara
+   pekarhändelser, mätning och rendering.
+   ================================================================ */
+
+export const DRAG = {
+  holdMs: 220,        /* långtryck innan drag armeras (touch) */
+  moveTol: 8,         /* rörelse före armering = skroll, inte drag */
+  weekDwellMs: 500,   /* håll över veckopilen ⇒ byt vecka, draget lever vidare */
+  edgePx: 96,         /* autoskrollzon vid skärmkant */
+  edgeStep: 14        /* px per bildruta i autoskroll */
+};
+
+/* Träfftest mot uppmätta zoner: [{id, x, y, w, h}] → id eller null.
+   Sista träffen vinner (senare zoner ligger visuellt överst). */
+export function hitTest(zones, x, y) {
+  let hit = null;
+  for (const z of zones ?? [])
+    if (x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h) hit = z.id;
+  return hit;
+}
+
+/* Närmaste zon i lodled — används när släppet sker på dagen men
+   mellan två fönster. Hellre närmaste rimliga mål än ett tappat drag. */
+export function nearestZone(zones, x, y) {
+  let best = null, bd = Infinity;
+  for (const z of zones ?? []) {
+    const dx = x < z.x ? z.x - x : x > z.x + z.w ? x - (z.x + z.w) : 0;
+    const dy = y < z.y ? z.y - y : y > z.y + z.h ? y - (z.y + z.h) : 0;
+    const d = Math.hypot(dx, dy);
+    if (d < bd) { bd = d; best = z.id; }
+  }
+  return best;
+}
+
+/* Tillståndsmaskin. Ren funktion: (state, event) → state.
+   phase: idle → armed → drag → drop|idle */
+export const dragIdle = { phase: "idle", id: null, x: 0, y: 0, day: null, slot: null, week: null, t0: 0 };
+
+export function dragReduce(state = dragIdle, ev = {}) {
+  const s = { ...dragIdle, ...state };
+  switch (ev.type) {
+    case "down":
+      return { ...dragIdle, phase: "armed", id: ev.id, x: ev.x, y: ev.y, t0: ev.t ?? 0,
+               grip: !!ev.grip, week: ev.week ?? null };
+    case "hold":
+      return s.phase === "armed" ? { ...s, phase: "drag" } : s;
+    case "move":
+      if (s.phase === "armed") {
+        if (s.grip) return { ...s, phase: "drag", x: ev.x, y: ev.y };       /* greppet drar direkt */
+        return Math.hypot(ev.x - s.x, ev.y - s.y) > DRAG.moveTol ? { ...dragIdle } : s;
+      }
+      return s.phase === "drag" ? { ...s, x: ev.x, y: ev.y } : s;
+    case "over":
+      return s.phase === "drag" ? { ...s, day: ev.day ?? null, slot: ev.slot ?? null } : s;
+    case "week":
+      return s.phase === "drag" ? { ...s, week: ev.week, day: null, slot: null } : s;
+    case "up":
+      if (s.phase !== "drag") return { ...dragIdle, tap: s.phase === "armed" ? s.id : null };
+      return s.slot != null && s.day != null
+        ? { ...dragIdle, drop: { id: s.id, week: s.week, day: s.day, slot: s.slot } }
+        : { ...dragIdle, cancelled: true };
+    case "cancel":
+      return { ...dragIdle, cancelled: s.phase === "drag" };
+    default:
+      return s;
+  }
+}
+
+/* Autoskroll: hur mycket sidan ska rulla när pekaren är nära kanten */
+export function edgeScroll(y, viewportH) {
+  if (y < DRAG.edgePx) return -DRAG.edgeStep;
+  if (y > viewportH - DRAG.edgePx) return DRAG.edgeStep;
+  return 0;
 }

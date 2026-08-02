@@ -1,54 +1,61 @@
-/* TRIZONE Next — ui.js · Rendering och händelser. All logik importeras från core.
-   Designspråk v0.1: S4 fönsterrader, L1 kort för objekt, L2 djup via ytsteg, T1 tvåröst.
+/* TRIZONE Next — ui.js · Rendering, gester och händelser. All logik importeras från core.
+   Designspråk v0.1: S4 fönsterrader, L1 kort för objekt, L2 djup via ytsteg, §8 rörelse.
    Byggstämpelparitet över ALLA fem filer: core, ui, index (meta), sw (aktiv cache), plan. */
 "use strict";
 import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
-         manualAdjust, shortDate, WINDOWS, DAYLABEL } from "./core.js";
+         manualAdjust, shortDate, WINDOWS, DAYLABEL,
+         dragReduce, dragIdle, hitTest, nearestZone, edgeScroll, DRAG } from "./core.js";
 
-export const UI_BUILD = "next-0.3.0 · 2026-08-02";
+export const UI_BUILD = "next-0.4.0 · 2026-08-02";
 
-/* Livsschema: profildata (D7). Bor i konfigurationen tills Inställningar finns. */
+/* Livsschema: profildata (D7). Flyttas till Inställningar när de byggs.
+   Schemat FRAMHÄVER fönster — det begränsar aldrig var något får placeras. */
 const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
                                4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] } };
 
-const S = { plan:null, overlay:null, store:null, week:null, sel:null, placing:null, note:null };
+const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null };
+let D = dragIdle, ghost = null, zones = [], rafId = 0, holdTimer = 0, dwell = { day:null, t:0 };
+
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 const SPORTLABEL = { swim:"SIM", bike:"CYKEL", run:"LÖP", strength:"STYRKA" };
 const today = () => new Date().toISOString().slice(0, 10);
 const now = () => new Date().toISOString();
+const app = () => document.getElementById("app");
+const view = () => weekView(S.plan, S.overlay, S.week, BINDINGS);
 const findSess = (v, id) =>
   [...v.days.flatMap(d => d.slots).flatMap(x => x.sessions), ...v.unplaced].find(x => x.id === id);
+const buzz = ms => { try { navigator.vibrate?.(ms); } catch {} };
 
-/* Zonremsa (S1, plansidan; utfallssidan tillkommer med matchningen) */
-function zstrip(profile) {
+/* ---------- Delar ---------- */
+function zstrip(profile, big = false) {
   const segs = (profile ?? []).filter(p => Array.isArray(p) && p[1] > 0);
-  return `<span class="zstrip" role="img" aria-label="Zonprofil">` +
+  return `<span class="zstrip${big ? " big" : ""}" role="img" aria-label="Zonprofil">` +
     segs.map(([z, m]) => `<i style="flex:${m};background:var(--z${z})" title="Z${z} ${m} min">` +
       (m >= 8 ? `<b>Z${z}</b>` : "") + `</i>`).join("") + `</span>`;
 }
 
 function sessionCard(s) {
   const struck = s.status === "struck";
-  return `<button class="sess${struck ? " struck" : ""}" data-sess="${esc(s.id)}">
+  return `<div class="sess${struck ? " struck" : ""}" data-sess="${esc(s.id)}" tabindex="0" role="button"
+      aria-label="${esc(s.title ?? s.id)}, ${s.durationMin} minuter">
     <i class="rib" style="background:var(--${esc(s.sport)})"></i>
-    <span class="line1">
+    <div class="line1">
       <span class="prio p${esc(s.prio)}">${esc(s.prio)}</span>
       <span class="lbl">${SPORTLABEL[s.sport] ?? esc(s.sport)}</span>
-      <span class="dur">${s.durationMin} min</span>
       ${s.protected ? `<span class="shield" title="Skyddat pass">◈</span>` : ""}
       ${struck ? `<span class="tag">struket</span>` : ""}
-    </span>
-    <span class="stitle">${esc(s.title ?? s.id)}</span>
+      <span class="dur">${s.durationMin} min</span>
+      <span class="grip" data-grip="${esc(s.id)}" aria-hidden="true">⠿</span>
+    </div>
+    <div class="stitle">${esc(s.title ?? s.id)}</div>
     ${zstrip(s.profile)}
-  </button>`;
+  </div>`;
 }
 
-/* ---------- Veckovyn (S4) ---------- */
+/* ---------- Vy ---------- */
 function render() {
-  const v = weekView(S.plan, S.overlay, S.week, BINDINGS);
-  const weeks = planWeeks(S.plan);
-  const i = weeks.indexOf(S.week);
-  const sum = v.summary;
+  const v = view(), weeks = planWeeks(S.plan), i = weeks.indexOf(S.week), sum = v.summary;
+  const dragging = D.phase === "drag";
   const h = [];
 
   h.push(`<div class="wknav">
@@ -59,53 +66,57 @@ function render() {
     </div>
     <button class="nav" data-week="${weeks[i+1] ?? ""}" ${i < 0 || i >= weeks.length-1 ? "disabled" : ""} aria-label="Nästa vecka">›</button>
   </div>`);
-
   if (v.week?.focus) h.push(`<p class="focus">${esc(v.week.focus)}</p>`);
 
   h.push(`<div class="sums">
     <span><b>${sum.planned}</b> pass</span>
-    <span><b>${Math.round(sum.minutes / 6) / 10}</b> h planerat</span>
+    <span><b>${Math.round(sum.minutes / 6) / 10}</b> h</span>
     ${sum.lowShare != null ? `<span><b>${Math.round(sum.lowShare * 100)} %</b> lågintensivt denna vecka</span>` : ""}
     ${sum.struck ? `<span class="dim">${sum.struck} struket</span>` : ""}
   </div>`);
+  if (sum.minutes) h.push(`<div class="wkzone">${zstrip(
+      sum.zones.map((m, z) => [z + 1, m]).filter(p => p[1] > 0), true)}
+      <span class="legend">ljusare = hårdare</span></div>`);
 
-  if (S.placing) h.push(`<div class="banner">Välj tidsfönster för <b>${esc(S.placing.title ?? S.placing.id)}</b>
-    <button class="txtbtn" data-cancel="1">Avbryt</button></div>`);
-
-  h.push(`<div class="week">`);
+  h.push(`<div class="week${dragging ? " dragging" : ""}">`);
   for (const d of v.days) {
-    const slots = S.placing
-      ? [...new Set([...(BINDINGS.schedule[d.day] ?? []), ...d.slots.map(s => s.slot)])]
-          .sort((a, b) => WINDOWS.indexOf(a) - WINDOWS.indexOf(b))
-          .map(slot => d.slots.find(s => s.slot === slot) ?? { slot, scheduled: true, sessions: [] })
+    const open = dragging && D.day === d.day;
+    const slots = (open || S.tapMove)
+      ? WINDOWS.map(slot => d.slots.find(s => s.slot === slot)
+          ?? { slot, scheduled: (BINDINGS.schedule[d.day] ?? []).includes(slot), sessions: [] })
       : d.slots;
-    h.push(`<section class="day${d.date === today() ? " today" : ""}">
+    h.push(`<section class="day${d.date === today() ? " today" : ""}${open ? " open" : ""}" data-day="${d.day}">
       <div class="dhead"><span class="dname">${d.label}</span><span class="ddate">${shortDate(d.date)}</span>
         ${d.minutes ? `<span class="dmin">${d.minutes} min</span>` : ""}</div>
       <div class="dslots">`);
     if (!slots.length) h.push(`<div class="rest">vila</div>`);
     for (const sl of slots) {
-      h.push(`<div class="slot${sl.scheduled ? "" : " offsched"}">
+      const target = (open || S.tapMove);
+      h.push(`<div class="slot${sl.scheduled ? "" : " offsched"}${target ? " droppable" : ""}${
+              dragging && D.day === d.day && D.slot === sl.slot ? " hot" : ""}"
+              data-slot="${d.day}|${esc(sl.slot)}">
         <span class="wchip">${esc(sl.slot)}</span>
-        <div class="sessions">`);
-      h.push(sl.sessions.map(s => sessionCard(s)).join(""));
-      if (S.placing) h.push(`<button class="target" data-place="${d.day}|${esc(sl.slot)}">Placera här</button>`);
+        <div class="sessions">${sl.sessions.map(sessionCard).join("")}`);
+      if (target && !sl.sessions.length) h.push(`<div class="empty">${S.tapMove ? "Placera här" : "släpp"}</div>`);
       h.push(`</div></div>`);
     }
     h.push(`</div></section>`);
   }
   h.push(`</div>`);
 
-  if (v.unplaced.length) h.push(`<section class="menu">
+  if (v.unplaced.length) h.push(`<section class="menu" data-day="-1">
     <div class="eyebrow">Att placera · ${v.unplaced.length}</div>
-    <p class="hint">Passen ligger utanför dagarna tills du placerar dem.</p>
-    ${v.unplaced.map(s => sessionCard(s)).join("")}
+    <p class="hint">Dra ett pass till en dag, eller tryck för att placera.</p>
+    ${v.unplaced.map(sessionCard).join("")}
   </section>`);
 
+  if (S.tapMove) h.push(`<div class="banner">Välj tidsfönster för <b>${esc(S.tapMove.title ?? S.tapMove.id)}</b>
+    <button class="txtbtn" data-cancel="1">Avbryt</button></div>`);
   if (S.sel) { const s = findSess(v, S.sel); if (s) h.push(sheet(s)); }
   if (S.note) h.push(`<div class="toast${S.note.bad ? " bad" : ""}">${esc(S.note.text)}</div>`);
 
-  document.getElementById("app").innerHTML = h.join("");
+  app().innerHTML = h.join("");
+  if (dragging) measure();
 }
 
 function sheet(s) {
@@ -114,6 +125,7 @@ function sheet(s) {
     <div class="eyebrow">${SPORTLABEL[s.sport] ?? esc(s.sport)} · ${s.durationMin} min · prio ${esc(s.prio)}</div>
     <h2>${esc(s.title ?? s.id)}</h2>
     ${s.text?.brief ? `<p class="serif">${esc(s.text.brief)}</p>` : ""}
+    ${s.text?.place ? `<p class="hint">${esc(s.text.place)}</p>` : ""}
     <div class="acts">
       <button data-act="move">${placed ? "Flytta" : "Placera"}</button>
       ${placed ? `<button data-act="unplace">Till menyn</button>` : ""}
@@ -125,35 +137,173 @@ function sheet(s) {
   </div></div>`;
 }
 
-/* ---------- Händelser ---------- */
+/* ---------- Lagring ---------- */
 function save(res, okText) {
   if (res.error) { S.note = { text: res.error, bad: true }; return; }
   S.overlay = res.overlay;
   const w = S.store.saveOverlay(S.overlay);
   S.note = w.ok ? { text: okText } : { text: w.error, bad: true };
 }
+const moveTo = (id, target, label) =>
+  save(manualAdjust(S.plan, S.overlay, id, "move", target, now()), label);
+
+/* ---------- Drag: mätning, spöke, autoskroll ---------- */
+function measure() {
+  zones = [];
+  for (const el of app().querySelectorAll("[data-day]")) {
+    const r = el.getBoundingClientRect();
+    zones.push({ id: "day:" + el.dataset.day, x: r.left, y: r.top, w: r.width, h: r.height });
+  }
+  for (const el of app().querySelectorAll(".slot.droppable")) {
+    const r = el.getBoundingClientRect();
+    zones.push({ id: "slot:" + el.dataset.slot, x: r.left, y: r.top, w: r.width, h: r.height });
+  }
+  for (const el of app().querySelectorAll(".nav:not([disabled])")) {
+    const r = el.getBoundingClientRect();
+    zones.push({ id: "week:" + el.dataset.week, x: r.left, y: r.top, w: r.width, h: r.height });
+  }
+}
+
+function makeGhost(id, x, y) {
+  const src = app().querySelector(`[data-sess="${CSS.escape(id)}"]`);
+  if (!src) return;
+  ghost = document.createElement("div");
+  ghost.className = "ghost";
+  ghost.style.width = src.getBoundingClientRect().width + "px";
+  ghost.innerHTML = src.innerHTML;
+  document.body.appendChild(ghost);
+  moveGhost(x, y);
+}
+const moveGhost = (x, y) => { if (ghost) ghost.style.transform = `translate3d(${x}px,${y}px,0)`; };
+const dropGhost = () => { ghost?.remove(); ghost = null; };
+
+function autoscroll(y) {
+  cancelAnimationFrame(rafId);
+  const step = edgeScroll(y, window.innerHeight);
+  if (!step || D.phase !== "drag") return;
+  const tick = () => { window.scrollBy(0, step); measure(); rafId = requestAnimationFrame(tick); };
+  rafId = requestAnimationFrame(tick);
+}
+
+function pointOver(x, y) {
+  const hit = hitTest(zones, x, y) ?? "";
+  if (hit.startsWith("week:")) {
+    const wk = Number(hit.slice(5));
+    if (dwell.day !== hit) dwell = { day: hit, t: Date.now() };
+    else if (Date.now() - dwell.t > DRAG.weekDwellMs && wk !== S.week) {
+      S.week = wk; D = dragReduce(D, { type: "week", week: wk }); dwell = { day: null, t: 0 };
+      buzz(6); render();
+    }
+    return;
+  }
+  dwell = { day: null, t: 0 };
+  if (hit.startsWith("slot:")) {
+    const [day, slot] = hit.slice(5).split("|");
+    const changed = D.day !== Number(day) || D.slot !== slot;
+    D = dragReduce(D, { type: "over", day: Number(day), slot });
+    if (changed) render();
+    return;
+  }
+  if (hit.startsWith("day:")) {
+    const day = Number(hit.slice(4));
+    if (day < 0) { D = dragReduce(D, { type: "over", day: null, slot: null }); return; }
+    if (D.day !== day) {                                   /* dagen öppnar sina fönster */
+      D = dragReduce(D, { type: "over", day, slot: null });
+      buzz(4); render();
+      const near = nearestZone(zones.filter(z => z.id.startsWith("slot:" + day + "|")), x, y);
+      if (near) D = dragReduce(D, { type: "over", day, slot: near.split("|")[1] });
+    } else if (D.slot == null) {
+      const near = nearestZone(zones.filter(z => z.id.startsWith("slot:" + day + "|")), x, y);
+      if (near) { D = dragReduce(D, { type: "over", day, slot: near.split("|")[1] }); render(); }
+    }
+    return;
+  }
+  if (D.day != null) { D = dragReduce(D, { type: "over", day: null, slot: null }); render(); }
+}
+
+function endDrag(ev) {
+  clearTimeout(holdTimer); cancelAnimationFrame(rafId);
+  const prev = D;
+  D = dragReduce(D, ev);
+  dropGhost();
+  document.body.classList.remove("nodrag");
+  if (D.drop) {
+    const { id, week, day, slot } = D.drop;
+    buzz(10);
+    moveTo(id, { week, day, slot }, `Flyttat: ${DAYLABEL[day]} ${slot}.`);
+  } else if (D.cancelled) {
+    S.note = { text: "Flytten avbröts — passet ligger kvar." };
+  } else if (D.tap) {
+    S.sel = D.tap;
+  }
+  D = dragIdle;
+  if (prev.phase !== "idle") render();
+}
 
 function wire() {
-  document.getElementById("app").addEventListener("click", (ev) => {
-    const t = ev.target.closest("[data-week],[data-sess],[data-act],[data-place],[data-cancel],[data-close]");
+  const root = app();
+
+  root.addEventListener("pointerdown", (ev) => {
+    if (ev.button > 0) return;
+    const card = ev.target.closest("[data-sess]");
+    const ctl = ev.target.closest("[data-week],[data-act],[data-cancel],[data-slot].droppable,[data-close]");
+    if (ctl && !card) return;                                /* knappar sköts av click */
+    if (!card) return;
+    const grip = !!ev.target.closest("[data-grip]") || ev.pointerType === "mouse";
+    D = dragReduce(dragIdle, { type: "down", id: card.dataset.sess, x: ev.clientX, y: ev.clientY,
+                               t: Date.now(), grip, week: S.week });
+    root.setPointerCapture?.(ev.pointerId);
+    clearTimeout(holdTimer);
+    if (!grip) holdTimer = setTimeout(() => {
+      if (D.phase !== "armed") return;
+      D = dragReduce(D, { type: "hold" });
+      document.body.classList.add("nodrag"); buzz(8);
+      makeGhost(D.id, D.x, D.y); render(); measure(); pointOver(D.x, D.y);
+    }, DRAG.holdMs);
+  });
+
+  root.addEventListener("pointermove", (ev) => {
+    if (D.phase === "idle") return;
+    const was = D.phase;
+    D = dragReduce(D, { type: "move", x: ev.clientX, y: ev.clientY });
+    if (was === "armed" && D.phase === "drag") {             /* grepp/mus: draget startar direkt */
+      clearTimeout(holdTimer);
+      document.body.classList.add("nodrag");
+      makeGhost(D.id, D.x, D.y); render(); measure();
+    }
+    if (D.phase !== "drag") { clearTimeout(holdTimer); return; }
+    moveGhost(ev.clientX, ev.clientY);
+    pointOver(ev.clientX, ev.clientY);
+    autoscroll(ev.clientY);
+  });
+
+  root.addEventListener("pointerup", () => endDrag({ type: "up" }));
+  root.addEventListener("pointercancel", () => endDrag({ type: "cancel" }));
+  /* Touch: hindra sidan från att rulla medan draget pågår */
+  root.addEventListener("touchmove", (ev) => { if (D.phase === "drag") ev.preventDefault(); }, { passive: false });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { if (D.phase !== "idle") endDrag({ type: "cancel" });
+                               else if (S.sel || S.tapMove) { S.sel = null; S.tapMove = null; render(); } }
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target?.dataset?.sess) {
+      ev.preventDefault(); S.sel = ev.target.dataset.sess; render();
+    }
+  });
+
+  root.addEventListener("click", (ev) => {
+    const t = ev.target.closest("[data-week],[data-act],[data-cancel],[data-close],[data-slot].droppable");
     if (!t) return;
     S.note = null;
-
-    if (t.dataset.week) { S.week = Number(t.dataset.week); S.sel = null; S.placing = null; }
-    else if (t.dataset.cancel) { S.placing = null; S.sel = null; }
+    if (t.dataset.week) { S.week = Number(t.dataset.week); S.sel = null; S.tapMove = null; }
+    else if (t.dataset.cancel) { S.tapMove = null; S.sel = null; }
     else if (t.dataset.close) { if (t !== ev.target) return; S.sel = null; }
-    else if (t.dataset.sess) { S.sel = t.dataset.sess; }
-    else if (t.dataset.place) {
-      const [day, slot] = t.dataset.place.split("|");
-      save(manualAdjust(S.plan, S.overlay, S.placing.id, "move",
-                        { week: S.week, day: Number(day), slot }, now()),
-           `Placerat: ${DAYLABEL[day]} ${slot}.`);
-      S.placing = null; S.sel = null;
+    else if (t.dataset.slot && S.tapMove) {
+      const [day, slot] = t.dataset.slot.split("|");
+      moveTo(S.tapMove.id, { week: S.week, day: Number(day), slot }, `Placerat: ${DAYLABEL[day]} ${slot}.`);
+      S.tapMove = null; S.sel = null;
     }
     else if (t.dataset.act) {
-      const act = t.dataset.act, id = S.sel;
-      const s = findSess(weekView(S.plan, S.overlay, S.week, BINDINGS), id);
-      if (act === "move") { S.placing = s; S.sel = null; }
+      const act = t.dataset.act, id = S.sel, s = findSess(view(), id);
+      if (act === "move") { S.tapMove = s; S.sel = null; }
       else if (act === "close") { S.sel = null; }
       else { save(manualAdjust(S.plan, S.overlay, id, act, {}, now()),
                   act === "strike" ? "Struket." : act === "restore" ? "Strykningen hävd." : "Tillbaka i menyn.");
@@ -163,7 +313,7 @@ function wire() {
   });
 }
 
-/* ---------- Start: paritet, plan, lagring, vy ---------- */
+/* ---------- Start ---------- */
 async function boot() {
   const stamp = UI_BUILD.split(" ")[0];
   const diag = [];
@@ -216,8 +366,7 @@ async function boot() {
   }
 
   document.getElementById("diag").innerHTML = `<div class="kv">${diag.join("")}</div>`;
-  if (!S.plan) { document.getElementById("app").innerHTML =
-    `<p class="sub">Ingen giltig plan — veckan renderas inte. Se paritetskortet.</p>`; return; }
+  if (!S.plan) { app().innerHTML = `<p class="sub">Ingen giltig plan — veckan renderas inte. Se paritetskortet.</p>`; return; }
   wire();
   render();
 }
