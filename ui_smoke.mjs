@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.5.3 · 2026-08-02
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.6.0 · 2026-08-02
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -26,13 +26,20 @@ const mkRoot = () => ({
 });
 const els = { app: mkRoot(), diag: mkRoot() };
 
-const mem = new Map();
+const mem = new Map([["trizone.cache.v1", JSON.stringify({ data: { athlete: {}, activities: [
+  { id: 901, type: "Run",  name: "Löpintervaller tröskel", start_date_local: "2026-10-15T18:05:00",
+    moving_time: 52 * 60, distance: 10400, icu_hr_zone_times: [720, 360, 120, 1500, 420] },
+  { id: 902, type: "Ride", name: "Kort cykel", start_date_local: "2026-10-16T18:00:00",
+    moving_time: 100 * 60, distance: 50000 },
+  { id: 903, type: "Swim", name: "Morgonsim", start_date_local: "2026-10-16T06:40:00",
+    moving_time: 30 * 60, distance: 1500 }
+] } })]]);
 globalThis.window = { innerHeight: 2200, scrollBy() {},
   localStorage: { get length() { return mem.size; }, key: i => [...mem.keys()][i],
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.5.3 · 2026-08-02" }),
+  querySelector: () => ({ content: "next-0.6.0 · 2026-08-02" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -64,7 +71,7 @@ const tapCard = (id, wk = 42) => { const t = target({ sess: id }, ["data-sess"],
 const clickBtn = dataset => fire("click", { target: target(dataset, Object.keys(dataset).map(k => "data-" + k)) });
 
 /* ---------- Löpande listan ---------- */
-has(els.diag.innerHTML, "next-0.5.3", "paritetskortet renderas");
+has(els.diag.innerHTML, "next-0.6.0", "paritetskortet renderas");
 has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
 has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
 has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
@@ -75,6 +82,27 @@ ok(!els.app.innerHTML.includes('class="wtag"'), "fönstertaggen är borta ur kor
 has(els.app.innerHTML, "50 min", "kortet bär gren, prio, duration och titel — inget mer");
 has(els.app.innerHTML, "data-today", "Idag-knappen finns");
 ok(!/undefined|NaN|\[object/.test(els.app.innerHTML), "ingen undefined/NaN läcker ut i markup");
+
+/* ---------- Utfall: härledd status ur v32-cachen (0.6.0) ---------- */
+has(els.diag.innerHTML, "lästa ur v32-cachen", "aktivitetsraden i paritetskortet");
+has(els.diag.innerHTML, "read-only", "raden intygar att cachen aldrig skrivs");
+has(els.app.innerHTML, "✓ utfört", "exakt match ⇒ passet märks utfört utan handpåläggning");
+{ const so = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-run-thr"];
+  ok(so?.match?.activityId === 901, "auto-länken är sparad i overlayn");
+  ok(so.events.some(e => e.rule === "match-auto"), "P3: tyst länk redovisas i händelseloggen"); }
+has(els.app.innerHTML, "Att bekräfta", "mittzonskandidaten blir en fråga, aldrig ett tyst facit");
+has(els.app.innerHTML, "Utanför plan", "främmande aktivitet listas utanför plan");
+{ fire("click", { target: target({ nolink: "sk-w42-bike-long|902" }, ["data-nolink"]) });
+  const so = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-bike-long"];
+  ok(so?.matchDrop?.includes(902), "Nej sparas — paret föreslås aldrig igen");
+  ok(!els.app.innerHTML.includes("Att bekräfta"), "avvisad fråga försvinner ur vyn"); }
+{ const t = target({ sess: "sk-w42-run-thr" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 5, clientY: 5, pointerType: "touch", pointerId: 5 });
+  fire("pointerup", { target: t, t: Date.now() });
+  has(els.app.innerHTML, ">Plan<", "panelen visar plansidan av dubbelremsan");
+  has(els.app.innerHTML, "Utfört · 52 min", "panelen visar utfallsraden med duration och distans");
+  await new Promise(r => setTimeout(r, 500));
+  fire("click", { target: target({ act: "close" }, ["data-act"]) }); }
 
 /* ---------- Spökklicksspärren (0.5.2-buggen) ---------- */
 { const t = target({ sess: "sk-w42-run-thr" }, ["data-sess"], 42);

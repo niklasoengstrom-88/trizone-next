@@ -4,15 +4,19 @@
 "use strict";
 import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          manualAdjust, shortDate, DAYLABEL,
-         dragReduce, dragIdle, hitTest, edgeScroll, DRAG } from "./core.js";
+         dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
+         readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
+         actZoneMinutes, matchDate } from "./core.js";
 
-export const UI_BUILD = "next-0.5.3 · 2026-08-02";
+export const UI_BUILD = "next-0.6.0 · 2026-08-02";
 
 /* Livsschema: profildata (D7). Framhäver träningsdagar — spärrar aldrig placering. */
 const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
                                4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] } };
 
-const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null };
+const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
+            acts:[], mq:[], unplanned:[] };
+const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
     rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
 
@@ -41,13 +45,14 @@ function zstrip(profile, big = false) {
 
 function sessionCard(s) {
   const struck = s.status === "struck";
-  return `<div class="sess${struck ? " struck" : ""}" data-sess="${esc(s.id)}" tabindex="0" role="button"
+  return `<div class="sess${struck ? " struck" : ""}${s.status === "done" ? " done" : ""}" data-sess="${esc(s.id)}" tabindex="0" role="button"
       aria-label="${esc(s.title ?? s.id)}, ${s.durationMin} minuter">
     <i class="rib" style="background:var(--${esc(s.sport)})"></i>
     <div class="line1">
       <span class="prio p${esc(s.prio)}">${esc(s.prio)}</span>
       <span class="lbl">${SPORTLABEL[s.sport] ?? esc(s.sport)}</span>
       ${s.protected ? `<span class="shield" title="Skyddat pass">◈</span>` : ""}
+      ${s.status === "done" ? `<span class="donetag">✓ utfört</span>` : ""}
       ${struck ? `<span class="tag">struket</span>` : ""}
       <span class="dur">${s.durationMin} min</span>
     </div>
@@ -60,6 +65,22 @@ function sessionCard(s) {
 function render() {
   const weeks = planWeeks(S.plan);
   const h = [];
+
+  if (S.mq.length) {
+    h.push(`<section class="confirm"><div class="eyebrow">Att bekräfta · ${S.mq.length}</div>`);
+    for (const q of S.mq) {
+      const a = actById(q.activityId), s = findSess(q.sessionId);
+      if (!a || !s) continue;
+      h.push(`<div class="qrow">
+        <div class="qtext"><b>${esc(a.name || SPORTLABEL[s.sport] || "Aktivitet")}</b>
+          <span class="dim">${esc(matchDate(a.start_date_local) ?? "")} · ${Math.round(a.moving_time / 60)} min</span>
+          <span class="qvs">→ ${esc(s.title ?? s.id)}?</span></div>
+        <div class="qacts"><button data-link="${esc(q.sessionId)}|${a.id}|${q.score}">Länka</button>
+        <button class="ghostbtn" data-nolink="${esc(q.sessionId)}|${a.id}">Nej</button></div>
+      </div>`);
+    }
+    h.push(`</section>`);
+  }
 
   if (S.tapMove) h.push(`<div class="banner sticky">Tryck på en dag för <b>${esc(S.tapMove.title ?? S.tapMove.id)}</b>
     <button class="txtbtn" data-cancel="1">Avbryt</button></div>`);
@@ -103,11 +124,39 @@ function render() {
     h.push(`</section>`);
   }
 
+  if (S.unplanned.length) {
+    h.push(`<section class="menu offplan"><div class="eyebrow">Utanför plan · ${S.unplanned.length}</div>`);
+    for (const id of S.unplanned) {
+      const a = actById(id); if (!a) continue;
+      h.push(`<div class="oprow"><span class="dim">${esc(matchDate(a.start_date_local) ?? "")}</span>
+        <span>${esc(a.name || a.type)}</span><span class="dim">${Math.round(a.moving_time / 60)} min</span></div>`);
+    }
+    h.push(`</section>`);
+  }
   h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
   if (S.sel) { const s = findSess(S.sel); if (s) h.push(sheet(s)); }
   if (S.note) h.push(`<div class="toast${S.note.bad ? " bad" : ""}">${esc(S.note.text)}</div>`);
 
   app().innerHTML = h.join("");
+}
+
+function outcome(s) {
+  if (!s.matchedActivity) return "";
+  const a = actById(s.matchedActivity);
+  if (!a) return "";
+  const min = Math.round(a.moving_time / 60);
+  const km = a.distance > 0 ? ` · ${(a.distance / 1000).toFixed(1)} km` : "";
+  let strip = "";
+  if (s.sport === "swim") strip = `<p class="hint">Simpuls (optisk) är ogiltig — ingen zonremsa. Tempo och distans gäller.</p>`;
+  else if (s.sport !== "strength") {
+    const zm = actZoneMinutes(a);
+    strip = zm ? zstrip(zm.map((m, z) => [z + 1, m]).filter(p => p[1] > 0))
+               : `<p class="hint">Ingen zondata i aktiviteten.</p>`;
+  }
+  return `<div class="dual">
+    <div class="eyebrow">Plan</div>${zstrip(s.profile)}
+    <div class="eyebrow" style="margin-top:8px">Utfört · ${min} min${km}</div>${strip}
+  </div>`;
 }
 
 function sheet(s) {
@@ -117,6 +166,7 @@ function sheet(s) {
     <h2>${esc(s.title ?? s.id)}</h2>
     ${s.text?.brief ? `<p class="serif">${esc(s.text.brief)}</p>` : ""}
     ${s.text?.place ? `<p class="hint">${esc(s.text.place)}</p>` : ""}
+    ${outcome(s)}
     <div class="acts">
       <button data-act="move">${placed ? "Flytta" : "Placera"}</button>
       ${placed ? `<button data-act="unplace">Till menyn</button>` : ""}
@@ -128,12 +178,26 @@ function sheet(s) {
   </div></div>`;
 }
 
+/* ---------- Matchning: härled, auto-länka, spara (§5c) ---------- */
+function recomputeMatches() {
+  if (!S.acts.length) { S.mq = []; S.unplanned = []; return; }
+  const r = deriveMatches(S.plan, S.overlay, S.acts);
+  if (r.links.length) {
+    S.overlay = applyMatchLinks(S.overlay, r.links, "auto", now());
+    const w = S.store.saveOverlay(S.overlay);
+    if (!w.ok) S.note = { text: w.error, bad: true };
+  }
+  const r2 = r.links.length ? deriveMatches(S.plan, S.overlay, S.acts) : r;
+  S.mq = r2.questions; S.unplanned = r2.unplanned;
+}
+
 /* ---------- Lagring ---------- */
 function save(res, okText) {
   if (res.error) { S.note = { text: res.error, bad: true }; return; }
   S.overlay = res.overlay;
   const w = S.store.saveOverlay(S.overlay);
   S.note = w.ok ? { text: okText } : { text: w.error, bad: true };
+  recomputeMatches();
 }
 const moveTo = (id, target, label) =>
   save(manualAdjust(S.plan, S.overlay, id, "move", target, now()), label);
@@ -269,10 +333,24 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink]");
     if (!t) return;
     S.note = null;
-    if (t.dataset.cancel) { S.tapMove = null; S.sel = null; }
+    if (t.dataset.link) {
+      const [sid, aid, sc] = t.dataset.link.split("|");
+      S.overlay = applyMatchLinks(S.overlay, [{ sessionId: sid, activityId: Number(aid), score: Number(sc) }], "confirm", now());
+      const w = S.store.saveOverlay(S.overlay);
+      S.note = w.ok ? { text: "Länkat — passet är utfört." } : { text: w.error, bad: true };
+      recomputeMatches();
+    }
+    else if (t.dataset.nolink) {
+      const [sid, aid] = t.dataset.nolink.split("|");
+      S.overlay = dismissMatch(S.overlay, sid, Number(aid), now());
+      const w = S.store.saveOverlay(S.overlay);
+      if (!w.ok) S.note = { text: w.error, bad: true };
+      recomputeMatches();
+    }
+    else if (t.dataset.cancel) { S.tapMove = null; S.sel = null; }
     else if (t.dataset.close != null && t === ev.target) { S.sel = null; }
     else if (t.dataset.today != null) { S.sel = null;
       document.getElementById("wk-" + S.week)?.scrollIntoView({ behavior: "smooth" }); return; }
@@ -343,6 +421,14 @@ async function boot() {
         l.blocked ? "bad" : "ok");
     const ws = planWeeks(S.plan);
     S.week = ws.find(w => weekView(S.plan, S.overlay, w).days.some(d => d.date === today())) ?? ws[0];
+
+    /* Utfall: v32:s aktivitetscache, READ-ONLY (beslut 2026-08-02) */
+    const cr = readActivityCache(window.localStorage.getItem("trizone.cache.v1"));
+    S.acts = cr.activities;
+    row("aktiviteter", cr.error ? cr.error
+        : `${cr.activities.length} lästa ur v32-cachen (${cr.path}, read-only)`,
+        cr.error ? "" : "ok");
+    recomputeMatches();
   }
 
   document.getElementById("diag").innerHTML = `<div class="kv">${diag.join("")}</div>`;

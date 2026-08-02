@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.5.3 · 2026-08-02";
+export const BUILD = "next-0.6.0 · 2026-08-02";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -833,7 +833,12 @@ export function weekView(plan, overlay, weekNo, bindings = {}) {
   const week = (plan?.weeks ?? []).find(w => w.week === weekNo) ?? null;
 
   const eff = (plan?.sessions ?? [])
-    .map(s => ({ ...effectiveSession(s, ov.sessions?.[s.id]), _src: s }))
+    .map(s => {
+      const so = ov.sessions?.[s.id];
+      const e = { ...effectiveSession(s, so), _src: s };
+      if (!e.status && so?.match) { e.status = "done"; e.matchedActivity = so.match.activityId; }
+      return e;                                    /* härledd status: länk ⇒ utfört; strykning vinner (M3, §5c) */
+    })
     .filter(s => s.week === weekNo);
 
   const days = dates.map((date, day) => {
@@ -854,6 +859,7 @@ export function weekView(plan, overlay, weekNo, bindings = {}) {
     week, weekNo, days, unplaced,
     summary: {
       planned: live.length, struck: eff.length - live.length, unplaced: unplaced.length,
+      done: live.filter(s => s.status === "done").length,
       minutes: live.reduce((n, s) => n + (s.durationMin || 0), 0),
       zones, lowMinutes: zones[0] + zones[1],
       lowShare: total ? (zones[0] + zones[1]) / total : null   /* fönster = denna vecka (v28-regeln) */
@@ -1012,4 +1018,137 @@ export function edgeScroll(y, viewportH) {
   if (y < DRAG.edgePx) return -DRAG.edgeStep;
   if (y > viewportH - DRAG.edgePx) return DRAG.edgeStep;
   return 0;
+}
+
+/* ================================================================
+   UTFALL OCH HÄRLEDD STATUS (matchning v0.2 · planformat §5c)
+   Aktiviteter läses READ-ONLY ur v32:s trizone.cache.v1 (beslut
+   2026-08-02: Next skriver aldrig den nyckeln under samexistensen).
+   ================================================================ */
+
+/* Trimmad aktivitetsprojektion — endast fälten matchningen och
+   utfallsvisningen använder (matchning §3, F5). */
+const ACT_FIELDS = ["id", "type", "name", "start_date_local", "moving_time", "distance",
+  "trainer", "icu_hr_zone_times", "icu_training_load", "average_heartrate", "icu_average_hr",
+  "average_watts", "icu_average_watts", "has_device_watts", "average_cadence"];
+const looksLikeActivity = a => a && typeof a === "object" &&
+  a.id != null && typeof a.type === "string" && (a.start_date_local || a.start_date);
+
+/* Tolerant extraktion: v32:s exakta cachestruktur ägs av v32 — vi letar,
+   vi antar inte. Hittar första listan som ser ut som aktiviteter. */
+export function readActivityCache(raw) {
+  let c;
+  try { c = typeof raw === "string" ? JSON.parse(raw) : raw; }
+  catch (e) { return { activities: [], error: `cachen går inte att läsa: ${e.message}` }; }
+  if (!c || typeof c !== "object") return { activities: [], error: "cachen saknas eller är tom" };
+
+  const paths = [["activities"], ["data", "activities"], ["acts"], ["data", "acts"], ["data"]];
+  let found = null, where = null;
+  for (const p of paths) {
+    let v = c;
+    for (const k of p) v = v?.[k];
+    if (Array.isArray(v) && v.length && v.filter(looksLikeActivity).length >= v.length / 2) {
+      found = v; where = p.join("."); break;
+    }
+  }
+  if (!found) {                                   /* sista utväg: sök en nivå ned */
+    for (const [k, v] of Object.entries(c)) {
+      if (Array.isArray(v) && v.length && v.filter(looksLikeActivity).length >= v.length / 2) {
+        found = v; where = k; break;
+      }
+      if (v && typeof v === "object") for (const [k2, v2] of Object.entries(v)) {
+        if (Array.isArray(v2) && v2.length && v2.filter(looksLikeActivity).length >= v2.length / 2) {
+          found = v2; where = `${k}.${k2}`; break;
+        }
+      }
+      if (found) break;
+    }
+  }
+  if (!found) return { activities: [], error: "hittade ingen aktivitetslista i cachen — struktur okänd" };
+
+  const activities = found.filter(looksLikeActivity).map(a => {
+    const t = {};
+    for (const k of ACT_FIELDS) if (a[k] !== undefined) t[k] = a[k];
+    if (!t.start_date_local && a.start_date) t.start_date_local = a.start_date;
+    return t;
+  });
+  return { activities, path: where, total: found.length };
+}
+
+/* Utfallets zonremsa: icu_hr_zone_times (sekunder per zon) → [min Z1..Z5].
+   Samma zoneDist som plan-sidan konsumerar resultatet (M2). */
+export function actZoneMinutes(a) {
+  const z = a?.icu_hr_zone_times;
+  if (!Array.isArray(z) || z.length < 3 || !z.every(v => typeof v === "number")) return null;
+  const m = z.slice(0, 5).map(sec => Math.round(sec / 60));
+  while (m.length < 5) m.push(0);
+  return m.some(v => v > 0) ? m : null;
+}
+
+/* ---------- deriveMatches — ren härledning (M4) ----------
+   (plan, overlay, activities) → { links, questions, unplanned }
+   Läser alltid källa + överlagring (flyttade/kortade pass matchar sitt
+   aktuella läge). Struket pass matchas aldrig (M3). Avvisade par
+   (matchDrop) föreslås aldrig igen. */
+export function deriveMatches(plan, overlay, activities, opts = {}) {
+  const ov = overlay ?? {};
+  const sessions = (plan?.sessions ?? []).map(s => {
+    const so = ov.sessions?.[s.id];
+    const e = effectiveSession(s, so);
+    e.date = sessionDate(plan, e);
+    return e;
+  }).filter(s => s.date);                          /* oplacerade menypass utan dag deltar ej */
+
+  const linkedS = new Set(), linkedA = new Set();
+  for (const [id, so] of Object.entries(ov.sessions ?? {}))
+    if (so?.match?.activityId != null) { linkedS.add(id); linkedA.add(so.match.activityId); }
+
+  const dates = sessions.map(s => s.date).sort();
+  const lo = dates[0], hi = dates[dates.length - 1];
+  const inSpan = a => { const d = matchDate(a.start_date_local);
+    return d && d >= addDays(lo, -1) && d <= addDays(hi, 1); };
+
+  const acts = (activities ?? []).filter(a => !linkedA.has(a.id) && inSpan(a) && activitySane(a).ok);
+  const open = sessions.filter(s => !linkedS.has(s.id));
+  const cfg = { dateOfSession: s => s.date, windows: opts.windows };
+
+  const r = assignMatches(open, acts, cfg);
+  const dropped = (sid, aid) => (ov.sessions?.[sid]?.matchDrop ?? []).includes(aid);
+  const links = r.links.filter(l => !dropped(l.sessionId, l.activityId));
+  const questions = r.questions.filter(q => !dropped(q.sessionId, q.activityId));
+
+  const taken = new Set([...links.map(l => l.activityId), ...questions.map(q => q.activityId)]);
+  const secondaries = new Set(detectDuplicates(acts).map(d => d.secondary));
+  const unplanned = acts.filter(a => !taken.has(a.id) && !secondaries.has(a.id)).map(a => a.id);
+  return { links, questions, unplanned };
+}
+function addDays(iso, n) {
+  const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/* ---------- Länkskrivning (M1: länk, aldrig kopia · P3) ---------- */
+export function applyMatchLinks(overlay, links, source = "auto", now = "") {
+  const ov = structuredClone(overlay ?? {});
+  ov.sessions ??= {};
+  for (const l of links) {
+    const so = ov.sessions[l.sessionId] ??= {};
+    if (so.status === "struck") continue;                        /* M3: strykning rörs aldrig */
+    so.match = { activityId: l.activityId, score: l.score };
+    if (so.status === "done") delete so.status;                  /* härledd ersätter manuell */
+    (so.events ??= []).push({ rule: source === "auto" ? "match-auto" : "match-confirm",
+      session: l.sessionId, action: "link",
+      why: `Aktivitet ${l.activityId} länkad (${l.score} p${source === "auto" ? ", tyst ≥ tröskel" : ", bekräftad"}).`,
+      t: now });
+  }
+  return ov;
+}
+
+export function dismissMatch(overlay, sessionId, activityId, now = "") {
+  const ov = structuredClone(overlay ?? {});
+  const so = (ov.sessions ??= {})[sessionId] ??= {};
+  so.matchDrop = [...(so.matchDrop ?? []), activityId];
+  (so.events ??= []).push({ rule: "match-dismiss", session: sessionId, action: "warn",
+    why: `Föreslagen länk till aktivitet ${activityId} avvisad — föreslås inte igen.`, t: now });
+  return ov;
 }

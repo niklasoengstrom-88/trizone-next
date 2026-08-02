@@ -679,10 +679,106 @@ const seq = (...evs) => evs.reduce((st, e) => dragReduce(st, e), dragIdle);
   eq(weekView(plan, r.overlay, 42, B).days[3].sessions.length, 0,
      "passet lämnar sin gamla vecka helt"); }
 
+/* ================================================================
+   UTFALL OCH MATCHNING — härledd status (matchningsspec §10)
+   ================================================================ */
+import { readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
+         actZoneMinutes } from "./core.js";
+
+const act = (id, iso, sport, min, extra = {}) => ({
+  id, type: { run:"Run", bike:"Ride", swim:"Swim", strength:"WeightTraining" }[sport],
+  name: extra.name ?? "", start_date_local: iso, moving_time: min * 60,
+  distance: extra.km != null ? extra.km * 1000 : (sport === "run" ? min * 200 : sport === "bike" ? min * 500 : 0),
+  ...extra });
+
+/* ---------- Cacheläsaren: tolerant, read-only, trimmad ---------- */
+{ const raw = JSON.stringify({ data: { activities: [
+    { ...act(1, "2026-10-15T18:05", "run", 52), secretField: "x".repeat(500), device_name:"FR965" } ], athlete: {} } });
+  const r = readActivityCache(raw);
+  eq(r.activities.length, 1, "cacheläsaren hittar aktivitetslistan under data.activities");
+  eq(r.path, "data.activities", "läsaren redovisar var den hittade listan");
+  ok(r.activities[0].secretField === undefined && r.activities[0].device_name === undefined,
+     "F5: okända fält når aldrig Next — trimmad projektion");
+  eq(r.activities[0].moving_time, 52 * 60, "matchningens fält följer med"); }
+{ eq(readActivityCache(JSON.stringify({ activities: [act(1, "2026-10-15T18:05", "run", 52)] })).activities.length, 1,
+     "cacheläsaren klarar listan på toppnivå också");
+  ok(readActivityCache("{ trasig").error, "trasig cache förklaras, kraschar inte");
+  ok(readActivityCache(JSON.stringify({ data: { athlete: {} } })).error?.includes("struktur okänd"),
+     "cache utan aktivitetslista säger det rakt ut — ingen gissning"); }
+{ const src = { activities: [act(1, "2026-10-15T18:05", "run", 52)] };
+  const json = JSON.stringify(src);
+  readActivityCache(json);
+  eq(JSON.stringify(src), json, "läsningen muterar aldrig källan — v32:s cache är read-only"); }
+
+/* ---------- Fixtur 1: exakt match ⇒ tyst länk ---------- */
+{ const acts = [act(10, "2026-10-15T18:05", "run", 52, { name: "Löpintervaller tröskel" })];
+  const r = deriveMatches(plan, {}, acts);
+  eq(r.links.map(l => [l.sessionId, l.activityId]), [["sk-w42-run-thr", 10]],
+     "fixtur 1: samma dag, gren, duration ⇒ auto-länk");
+  ok(r.links[0].score >= 70, "auto-länken ligger över tröskeln");
+  eq(r.unplanned.length, 0, "länkad aktivitet är inte utanför plan"); }
+
+/* ---------- Fixtur 2: flyttat pass matchar sitt överlagrade läge ---------- */
+{ const { overlay } = manualAdjust(plan, {}, "sk-w42-run-thr", "move", { day: 4 }, NOW);
+  const r = deriveMatches(plan, overlay, [act(11, "2026-10-16T17:30", "run", 50)]);
+  eq(r.links[0]?.sessionId, "sk-w42-run-thr",
+     "fixtur 2: matchningen läser källa + överlagring — aktivitet på nya dagen träffar"); }
+
+/* ---------- Fixtur 2b: manuellt kortat pass matchar mot nya dosen ---------- */
+{ const { overlay } = manualAdjust(plan, {}, "sk-w42-bike-long", "shorten", { durationMin: 90 }, NOW);
+  const r = deriveMatches(plan, overlay, [act(12, "2026-10-17T07:10", "bike", 92)]);
+  ok(r.links.some(l => l.sessionId === "sk-w42-bike-long" && l.score >= 70),
+     "fixtur 2b: kortat pass 150→90 matchar en 92-minutersaktivitet fullt ut"); }
+
+/* ---------- Fixtur 5: aktivitet på struket pass ⇒ utanför plan, strykning orörd ---------- */
+{ const ov = manualAdjust(plan, {}, "sk-w42-swim-css", "strike", {}, NOW).overlay;
+  const r = deriveMatches(plan, ov, [act(13, "2026-10-13T12:10", "swim", 41)]);
+  ok(!r.links.length && !r.questions.length, "fixtur 5: struket pass matchas aldrig (M3)");
+  eq(r.unplanned, [13], "aktiviteten blir utanför plan i stället");
+  const after = applyMatchLinks(ov, [{ sessionId: "sk-w42-swim-css", activityId: 13, score: 99 }], "auto", NOW);
+  eq(after.sessions["sk-w42-swim-css"].status, "struck",
+     "M3: inte ens en direkt länkskrivning rör en manuell strykning"); }
+
+/* ---------- Härledd ersätter manuell — aldrig tvärtom ---------- */
+{ const ov = { sessions: { "sk-w42-run-thr": { status: "done" } } };
+  const after = applyMatchLinks(ov, [{ sessionId: "sk-w42-run-thr", activityId: 10, score: 90 }], "auto", NOW);
+  ok(after.sessions["sk-w42-run-thr"].match && after.sessions["sk-w42-run-thr"].status === undefined,
+     "§5c: länken ersätter manuell utfört-markering — en sanning");
+  const v = weekView(plan, after, 42, B);
+  eq(v.days[3].sessions[0].status, "done", "weekView härleder utfört ur länken");
+  eq(v.summary.done, 1, "sammanfattningen räknar utförda");
+  const struck = { sessions: { "sk-w42-run-thr": { status: "struck", match: { activityId: 10 } } } };
+  eq(weekView(plan, struck, 42, B).days[3].sessions[0].status, "struck",
+     "strykning vinner över länk även i vyn (M3)"); }
+
+/* ---------- Redan länkat deltar inte igen ---------- */
+{ const ov = applyMatchLinks({}, [{ sessionId: "sk-w42-run-thr", activityId: 10, score: 94 }], "auto", NOW);
+  const r = deriveMatches(plan, ov, [act(10, "2026-10-15T18:05", "run", 52), act(14, "2026-10-15T19:40", "run", 48)]);
+  ok(!r.links.some(l => l.sessionId === "sk-w42-run-thr"), "länkat pass reserveras inte om");
+  eq(r.unplanned, [14], "andra aktiviteten samma kväll blir utanför plan — inte dubbellänkad"); }
+
+/* ---------- Frågezonen + avvisning ---------- */
+{ const acts = [act(15, "2026-10-14T18:00", "bike", 35)];   /* ons 35 min mot lör 150 ⇒ mittzon? */
+  const r = deriveMatches(plan, {}, acts);
+  ok(!r.links.length, "svag kandidat auto-länkas aldrig");
+  const r2 = deriveMatches(plan, dismissMatch({}, "sk-w42-bike-long", 15, NOW), acts);
+  ok(!r2.questions.some(q => q.activityId === 15), "avvisat par föreslås aldrig igen");
+  ok(r2.unplanned.includes(15) || r.unplanned.includes(15) || r.questions.length,
+     "aktiviteten hamnar någonstans — aldrig i limbo"); }
+
+/* ---------- P3 + utfallsremsans data ---------- */
+{ const ov = applyMatchLinks({}, [{ sessionId: "sk-w42-run-thr", activityId: 10, score: 94 }], "auto", NOW);
+  const e = ov.sessions["sk-w42-run-thr"].events.at(-1);
+  ok(e.rule === "match-auto" && e.why.includes("94") && e.t, "P3: länken lämnar läsbar post med poäng");
+  eq(actZoneMinutes({ icu_hr_zone_times: [600, 1200, 300, 480, 120] }), [10, 20, 5, 8, 2],
+     "utfallsremsan: sekunder per zon → minuter, samma zoneDist-format som plansidan (M2)");
+  eq(actZoneMinutes({ icu_hr_zone_times: [] }), null, "tom zondata ⇒ ingen remsa, ingen låtsasremsa");
+  eq(actZoneMinutes({}), null, "saknad zondata ⇒ null"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 220;
+const EXPECTED_MIN = 251;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
