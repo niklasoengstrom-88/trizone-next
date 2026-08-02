@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.2.0 · 2026-08-01";
+export const BUILD = "next-0.2.1 · 2026-08-02";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -651,4 +651,171 @@ export function deactivateMode(overlay, key, now = "") {
   (ov.modes.log ??= []).push({ rule: "mode-off", session: null, action: "deactivate",
     why: `Läget ${key} avaktiverat.`, t: now });
   return ov;
+}
+
+/* ================================================================
+   LAGRINGSLAGRET (planformat §4.4, §5, §7, §8 · F5)
+   Injicerad storage-adapter ⇒ kvotvägen är testbar. Ingen DOM.
+   Nycklar beslutade i planformat §7 — inga nya nycklar tillkommer.
+   ================================================================ */
+
+export const KEYS = { plan: "trizone.plan.v1", overlay: "trizone.overlay.v1" };
+
+export const byteSize = s => new TextEncoder().encode(String(s ?? "")).length;
+const kB = n => (n / 1024).toFixed(n < 10240 ? 1 : 0) + " kB";
+
+/* F5 — trimmad projektion: vitlista, aldrig råa svar. Okända fält från
+   coachgenererad plandata når aldrig lagringen. */
+const pick = (o, keys) => { const r = {}; for (const k of keys) if (o?.[k] !== undefined) r[k] = o[k]; return r; };
+export function trimPlan(plan) {
+  const p = pick(plan, ["formatVersion", "planVersion", "generated", "athlete", "anchor"]);
+  p.blocks   = (plan.blocks   ?? []).map(b => pick(b, ["id", "label", "start", "weeks"]));
+  p.weeks    = (plan.weeks    ?? []).map(w => pick(w, ["week", "iso", "block", "type", "focus"]));
+  p.sessions = (plan.sessions ?? []).map(s => {
+    const t = pick(s, ["id", "week", "day", "slot", "sport", "prio", "protected",
+                       "title", "durationMin", "profile"]);
+    if (s.text) t.text = pick(s.text, ["brief", "exec", "place", "goal"]);
+    return t;
+  });
+  if (plan.changelog) p.changelog = plan.changelog.slice(-5);
+  return p;
+}
+
+export const emptyOverlay = (planVersion = null) =>
+  ({ planVersion, sessions: {}, placed: {}, patches: [], modes: {}, orphans: [], archive: {} });
+
+/* §8 — overlayvalidering. Trasig data renderas aldrig, den förklaras. */
+const STATUS = ["planned", "done", "struck"];
+export function validateOverlay(ov, plan = null) {
+  const errors = [];
+  const bad = (where, why) => errors.push({ where, why });
+  if (!ov || typeof ov !== "object") return { ok: false, errors: [{ where: "overlay", why: "inte ett objekt" }] };
+  if (ov.sessions && typeof ov.sessions !== "object") bad("overlay.sessions", "inte ett objekt");
+  const ids = plan ? new Set((plan.sessions ?? []).map(s => s.id)) : null;
+  for (const [id, so] of Object.entries(ov.sessions ?? {})) {
+    if (!so || typeof so !== "object") { bad(id, "posten är inte ett objekt"); continue; }
+    if (so.status !== undefined && !STATUS.includes(so.status))
+      bad(id, `okänd status "${so.status}" (väntat ${STATUS.join(" | ")})`);
+    if (so.moved !== undefined && (so.moved === null || typeof so.moved !== "object" || so.moved.week == null))
+      bad(id, "moved saknar week");
+    if (so.events !== undefined && !Array.isArray(so.events)) bad(id, "events är inte en lista");
+    for (const [i, e] of (Array.isArray(so.events) ? so.events : []).entries())
+      if (!e || !e.rule || !e.action || !e.t) bad(`${id}.events[${i}]`, "post saknar rule/action/t");
+    if (so.rpe !== undefined && !(Number(so.rpe) >= 1 && Number(so.rpe) <= 10)) bad(id, "rpe utanför 1–10");
+  }
+  if (ids) for (const id of Object.keys(ov.sessions ?? {}))
+    if (!ids.has(id)) bad(id, "pass-id saknas i planen — hanteras som föräldralöst, aldrig raderat");
+  return { ok: !errors.length, errors };
+}
+
+/* §5 + P3 — avstämning vid ny planVersion.
+   Överlagringar vars pass finns kvar följer med. Övriga blir föräldralösa:
+   de raderas ALDRIG, de listas för beslut. */
+export function reconcileOverlay(ov, plan, now = "") {
+  const out = structuredClone(ov ?? emptyOverlay());
+  out.sessions ??= {}; out.placed ??= {}; out.orphans ??= []; out.archive ??= {};
+  const ids = new Set((plan?.sessions ?? []).map(s => s.id));
+  const fresh = [];
+  for (const id of Object.keys(out.sessions))
+    if (!ids.has(id)) {
+      fresh.push({ id, data: out.sessions[id], placed: out.placed[id] ?? null,
+                   fromVersion: out.planVersion ?? null, since: now, decision: null });
+      delete out.sessions[id]; delete out.placed[id];
+    }
+  for (const id of Object.keys(out.placed)) if (!ids.has(id)) {
+    fresh.push({ id, data: null, placed: out.placed[id], fromVersion: out.planVersion ?? null, since: now, decision: null });
+    delete out.placed[id];
+  }
+  out.orphans = [...out.orphans, ...fresh];
+  out.planVersion = plan?.planVersion ?? out.planVersion;
+  return { overlay: out, orphans: fresh, changed: fresh.length > 0 || ov?.planVersion !== out.planVersion };
+}
+
+/* Ett beslut per post (P3). Radering är möjlig men aldrig tyst — den loggas. */
+export function resolveOrphan(ov, id, decision, now = "") {
+  const out = structuredClone(ov ?? emptyOverlay());
+  out.orphans ??= []; out.archive ??= {}; out.modes ??= {};
+  const i = out.orphans.findIndex(o => o.id === id);
+  if (i < 0) return out;
+  const [orph] = out.orphans.splice(i, 1);
+  (out.modes.log ??= []).push({ rule: "orphan", session: id, action: decision,
+    why: decision === "archive" ? "Föräldralös överlagring arkiverad."
+                                : "Föräldralös överlagring raderad på användarens beslut.", t: now });
+  if (decision === "archive") out.archive[id] = { ...orph, decision, t: now };
+  return out;
+}
+
+/* ---------- makeStore — enda vägen till persistens ----------
+   Kvotvakt på varje skrivning; felmeddelandet säger VAD som är fullt
+   och VAD man kan göra (F5). Vid kvotfel behålls det gamla värdet orört. */
+export function makeStore(storage) {
+  let blocked = null;                     /* S2: trasig overlay spärrar skrivning tills beslut */
+
+  const report = () => {
+    const keys = [];
+    for (let i = 0; i < (storage.length ?? 0); i++) {
+      const k = storage.key(i);
+      if (k?.startsWith("trizone.")) keys.push({ key: k, bytes: byteSize(storage.getItem(k)) });
+    }
+    keys.sort((a, b) => b.bytes - a.bytes);
+    return { keys, total: keys.reduce((s, k) => s + k.bytes, 0) };
+  };
+
+  const quotaMessage = (key, bytes) => {
+    const r = report();
+    const top = r.keys.filter(k => k.key !== key).slice(0, 2)
+      .map(k => `${k.key} ${kB(k.bytes)}`).join(", ");
+    return `Lagringen är full — ${key} (${kB(bytes)}) kunde inte sparas och det gamla värdet står kvar. ` +
+           `Störst just nu: ${top || "inget annat"}. Totalt ${kB(r.total)}. ` +
+           `Rensa aktivitetscachen eller exportera säsongen i Profil.`;
+  };
+
+  const write = (key, value) => {
+    const json = JSON.stringify(value);
+    try { storage.setItem(key, json); return { ok: true, bytes: byteSize(json) }; }
+    catch (e) {
+      const quota = /quota|exceeded|NS_ERROR_DOM_QUOTA/i.test(String(e?.name) + String(e?.message));
+      return { ok: false, bytes: byteSize(json),
+               error: quota ? quotaMessage(key, byteSize(json)) : `Kunde inte spara ${key}: ${e?.message ?? e}` };
+    }
+  };
+
+  const readJson = (key) => {
+    const raw = storage.getItem(key);
+    if (raw == null) return { missing: true };
+    try { return { value: JSON.parse(raw) }; }
+    catch (e) { return { error: `${key} går inte att läsa (${e.message}). Rådata bevarad — inget skrivs över.` }; }
+  };
+
+  return {
+    KEYS, report,
+    get blocked() { return blocked; },
+
+    savePlan: (plan) => write(KEYS.plan, trimPlan(plan)),
+    loadPlan: () => { const r = readJson(KEYS.plan); return r.value ?? null; },
+
+    loadOverlay(plan) {
+      const r = readJson(KEYS.overlay);
+      if (r.error) { blocked = r.error; return { overlay: emptyOverlay(plan?.planVersion), errors: [r.error], blocked: true, dirty: false }; }
+      if (r.missing) return { overlay: emptyOverlay(plan?.planVersion), errors: [], blocked: false, dirty: true, orphans: [] };
+      const v = validateOverlay(r.value);            /* utan plan: formfel först, id-avvikelse via avstämning */
+      if (!v.ok) { blocked = v.errors.map(e => `${e.where}: ${e.why}`).join(" · "); 
+                   return { overlay: r.value, errors: v.errors, blocked: true, dirty: false }; }
+      const rec = reconcileOverlay(r.value, plan, new Date().toISOString());
+      blocked = null;
+      return { overlay: rec.overlay, orphans: rec.orphans, errors: [], blocked: false, dirty: rec.changed };
+    },
+
+    saveOverlay(ov, { force = false } = {}) {
+      if (blocked && !force) return { ok: false, error: "Skrivning spärrad: " + blocked };
+      const v = validateOverlay(ov);
+      if (!v.ok) return { ok: false, error: "Overlay avvisad (skrivs aldrig trasig): " +
+                                            v.errors.map(e => `${e.where}: ${e.why}`).join(" · ") };
+      const w = write(KEYS.overlay, ov);
+      if (w.ok) blocked = null;
+      return w;
+    },
+
+    unblock() { blocked = null; }
+  };
 }

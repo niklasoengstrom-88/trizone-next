@@ -356,6 +356,127 @@ const synth = { formatVersion:1, planVersion:"2026-07-31.1", blocks:[{id:"x",sta
 { const ov = applyActions({}, [{rule:"x", level:2, session:"s1", action:"explode", why:"", payload:{}, orig:{}, t:NOW}]);
   eq(ov.sessions["s1"], undefined, "åtgärdslistan är uttömmande: okänd åtgärd skrivs aldrig"); }
 
+
+/* ================================================================
+   LAGRINGSLAGRET — kvotvakt, avstämning, spärr
+   ================================================================ */
+import { makeStore, trimPlan, emptyOverlay, validateOverlay, reconcileOverlay,
+         resolveOrphan, byteSize, KEYS } from "./core.js";
+
+/* Falsk storage med kvottak — gör v32:s rad 944-lärdom testbar */
+function fakeStorage(limitBytes = Infinity, seed = {}) {
+  const m = new Map(Object.entries(seed));
+  const used = (skip) => [...m].filter(([k]) => k !== skip).reduce((s, [, v]) => s + byteSize(v), 0);
+  return {
+    get length() { return m.size; },
+    key: i => [...m.keys()][i],
+    getItem: k => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => {
+      if (used(k) + byteSize(v) > limitBytes) { const e = new Error("exceeded the quota"); e.name = "QuotaExceededError"; throw e; }
+      m.set(k, v);
+    },
+    removeItem: k => m.delete(k),
+    _dump: () => Object.fromEntries(m)
+  };
+}
+
+/* ---------- trimPlan: vitlista (F5) ---------- */
+{ const dirty = structuredClone(plan);
+  dirty.sessions[0].coachNotes = "x".repeat(5000);
+  dirty.sessions[0].rawApiBlob = { junk: true };
+  dirty.debugDump = "y".repeat(9000);
+  const t = trimPlan(dirty);
+  ok(t.sessions[0].coachNotes === undefined && t.sessions[0].rawApiBlob === undefined,
+     "F5: okända passfält når aldrig lagringen");
+  ok(t.debugDump === undefined, "F5: okända toppnivåfält trimmas bort");
+  eq(t.sessions.length, plan.sessions.length, "trimPlan: alla pass behålls");
+  eq(t.sessions[2].profile, plan.sessions[2].profile, "trimPlan: zonprofilen är bärande data och behålls");
+  ok(byteSize(JSON.stringify(t)) < byteSize(JSON.stringify(dirty)) - 13000, "F5: projektionen är faktiskt trimmad"); }
+
+/* ---------- validateOverlay (§8) ---------- */
+{ const v = validateOverlay({ sessions: { a: { status: "klart" } } });
+  ok(!v.ok && v.errors[0].why.includes("okänd status"), "§8: okänd status avvisas med rotorsak");
+  ok(validateOverlay(emptyOverlay("x")).ok, "§8: tom overlay är giltig");
+  ok(!validateOverlay({ sessions: { a: { events: [{ rule: "x" }] } } }).ok, "§8: eventpost utan action/t avvisas");
+  ok(!validateOverlay({ sessions: { a: { rpe: 14 } } }).ok, "§8: rpe utanför 1–10 avvisas");
+  ok(validateOverlay({ sessions: { a: { status: "done", rpe: 7 } } }).ok, "§8: välformad post släpps igenom"); }
+
+/* ---------- Kvotvakt (F5) ---------- */
+{ const st = makeStore(fakeStorage(400, { "trizone.cache.v1": "z".repeat(300) }));
+  const big = emptyOverlay("v1");
+  for (let i = 0; i < 40; i++) big.sessions["s" + i] = { status: "done", rpe: 7 };
+  const r = st.saveOverlay(big);
+  ok(!r.ok, "kvot: skrivning som spränger taket lyckas inte");
+  ok(r.error.includes("trizone.overlay.v1") && r.error.includes("kB"),
+     "kvot: felmeddelandet namnger vilken nyckel och hur stor den är");
+  ok(r.error.includes("trizone.cache.v1"), "kvot: felmeddelandet pekar ut vad som tar plats");
+  ok(/Rensa|exportera/.test(r.error), "kvot: felmeddelandet säger vad man kan göra"); }
+{ const fs = fakeStorage(400, { "trizone.overlay.v1": JSON.stringify(emptyOverlay("v1")) });
+  const st = makeStore(fs);
+  const before = fs.getItem("trizone.overlay.v1");
+  const big = emptyOverlay("v1");
+  for (let i = 0; i < 40; i++) big.sessions["s" + i] = { status: "done" };
+  st.saveOverlay(big);
+  eq(fs.getItem("trizone.overlay.v1"), before, "kvot: det gamla värdet står orört efter misslyckad skrivning"); }
+
+/* ---------- Trasig overlay spärrar skrivning (S2) ---------- */
+{ const fs = fakeStorage(1e6, { "trizone.overlay.v1": "{ trasig json" });
+  const st = makeStore(fs);
+  const r = st.loadOverlay(plan);
+  ok(r.blocked && r.errors.length, "S2: oläsbar overlay rapporteras, inte ignoreras");
+  const w = st.saveOverlay(emptyOverlay("x"));
+  ok(!w.ok && w.error.includes("spärrad"), "S2: skrivning spärras — historik överskrivs aldrig tyst");
+  eq(fs.getItem("trizone.overlay.v1"), "{ trasig json", "S2: rådata bevarad för räddning");
+  st.unblock();
+  ok(st.saveOverlay(emptyOverlay("x")).ok, "S2: användarens beslut häver spärren"); }
+{ const st = makeStore(fakeStorage(1e6, { "trizone.overlay.v1": JSON.stringify({ sessions: { a: { status: "fel" } } }) }));
+  ok(st.loadOverlay(plan).blocked, "S2: formfel spärrar också"); }
+{ const st = makeStore(fakeStorage(1e6));
+  ok(!st.saveOverlay({ sessions: { a: { status: "hittepå" } } }).ok, "trasig overlay skrivs aldrig, ens obruten spärr"); }
+
+/* ---------- Avstämning vid ny planVersion (§5, P3) ---------- */
+{ const ov = { ...emptyOverlay("2026-07-31.1"),
+    sessions: { "sk-w42-run-thr": { status: "done", rpe: 7 }, "borta-1": { status: "struck" } },
+    placed: { "borta-2": { week: 42, day: 3, slot: "Kväll" } } };
+  const r = reconcileOverlay(ov, plan, "2026-08-02T09:00:00");
+  ok(r.overlay.sessions["sk-w42-run-thr"], "avstämning: överlagring vars pass finns kvar följer med");
+  eq(r.orphans.map(o => o.id).sort(), ["borta-1", "borta-2"], "avstämning: försvunna pass blir föräldralösa");
+  ok(r.orphans.every(o => o.decision === null), "P3: varje föräldralös post väntar på ett beslut");
+  eq(r.overlay.sessions["borta-1"], undefined, "avstämning: föräldralös lyfts ur aktiv rendering");
+  ok(r.overlay.orphans.find(o => o.id === "borta-1").data.status === "struck",
+     "P3: föräldralös data raderas aldrig — den bevaras i listan");
+  const a = resolveOrphan(r.overlay, "borta-1", "archive", "2026-08-02T10:00:00");
+  ok(a.archive["borta-1"] && !a.orphans.some(o => o.id === "borta-1"), "beslut: arkivering flyttar posten till arkivet");
+  const d = resolveOrphan(r.overlay, "borta-2", "delete", "2026-08-02T10:00:00");
+  ok(!d.archive["borta-2"] && d.modes.log.some(e => e.rule === "orphan" && e.action === "delete"),
+     "beslut: radering är möjlig men aldrig tyst — den loggas"); }
+
+/* ---------- Rundtur: motor → overlay → lagring → läsning ---------- */
+{ const fs = fakeStorage(1e6);
+  const st = makeStore(fs);
+  ok(st.savePlan(plan).ok, "rundtur: trimmad plan sparas");
+  const l0 = st.loadOverlay(plan);
+  eq(l0.overlay.planVersion, plan.planVersion, "rundtur: tom overlay ärver planVersion");
+  const r = applyRules(plan, l0.overlay, B, [{ id: "missed", source: "manual", sessionId: "sk-w42-swim-css" }], NOW);
+  const ov1 = applyActions(l0.overlay, r.actions);
+  ok(st.saveOverlay(ov1).ok, "rundtur: motorns overlay passerar validering och skrivs");
+  const l1 = makeStore(fs).loadOverlay(plan);
+  eq(l1.overlay.sessions["sk-w42-swim-css"].status, "struck", "rundtur: statusen överlever en omladdning");
+  eq(l1.overlay.sessions["sk-w42-swim-css"].events[0].rule, "missed-B", "rundtur: P3-posten överlever omladdning");
+  ok(!l1.dirty && !l1.blocked, "rundtur: oförändrad planVersion kräver ingen omskrivning");
+  const rep = st.report();
+  ok(rep.keys.some(k => k.key === KEYS.plan) && rep.total > 0, "report: nycklar och storlek redovisas");
+  ok(rep.total < 200 * 1024, `budget: referensplanen + overlay ryms väl (${(rep.total/1024).toFixed(1)} kB)`); }
+
+/* ---------- Svitvakt (regression 2026-08-02) ----------
+   En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
+   och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
+const EXPECTED_MIN = 138;
+if (pass + fail < EXPECTED_MIN) {
+  console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
+  fail++;
+}
+
 /* ---------- Sammanfattning ---------- */
 console.log(`\n${pass}/${pass+fail} tester gröna` + (fail? ` — ${fail} RÖDA`:""));
 process.exit(fail?1:0);
