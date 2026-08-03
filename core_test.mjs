@@ -939,6 +939,22 @@ import { todayView, planDayOf, nextSession, effectiveRpe, logResult, unlogResult
   ok(unlogResult(linked, "sk-w42-run-thr", NOW).error?.includes("matchningen"),
      "länkad status kan inte ångras manuellt — en sanning per fakta"); }
 
+/* ---------- Zonkonfig-paritet (matchning §7) ---------- */
+import { zoneParity, ZONE_COUNT } from "./core.js";
+{ const five = [{ id:1, icu_hr_zone_times:[600,900,300,240,60] }, { id:2, icu_hr_zone_times:[300,1200,0,0,0] }];
+  const r = zoneParity(five);
+  ok(r.ok && r.checked === 2, "femzonsdata ⇒ paritet");
+  eq(zoneParity([]).ok, true, "utan aktiviteter finns inget att varna om");
+  eq(zoneParity([{ id:3 }]).checked, 0, "aktiviteter utan zondata granskas inte"); }
+{ const mixed = [{ id:1, icu_hr_zone_times:[600,900,300,240,60] },
+                 { id:2, icu_hr_zone_times:[100,200,300,400,500,600,700] }];
+  const r = zoneParity(mixed);
+  ok(!r.ok, "avvikande zonantal ⇒ paritetsbrott");
+  ok(r.why.includes("7 zoner") && r.why.includes(String(ZONE_COUNT)),
+     "varningen säger vad som skiljer — rotorsak, inte symptom");
+  ok(r.why.includes("intervals.icu"), "varningen pekar på var felet rättas");
+  eq(r.mismatches.map(m => m.id), [2], "avvikarna pekas ut individuellt"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */

@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.8.0 · 2026-08-03
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.8.1 · 2026-08-03
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.8.0 · 2026-08-03" }),
+  querySelector: () => ({ content: "next-0.8.1 · 2026-08-03" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -127,7 +127,50 @@ clickBtn({ nav: "plan" });
      "ångra återställer exakt"); }
 clickBtn({ nav: "installningar" });
 has(els.app.innerHTML, "RPE i 1 av dem", "aktivitetsraden räknar RPE-bärande aktiviteter — svaret på länk 2");
+has(els.app.innerHTML, "zonparitet", "paritetsraden redovisas i Inställningar (§7)");
+has(els.app.innerHTML, "5 zoner", "paritetsraden säger vad den granskat");
 clickBtn({ nav: "plan" });
+
+/* ---------- §5d-verben i panelen (0.8.1) ---------- */
+{ const t = target({ sess: "sk-w42-bike-long" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 8, clientY: 8, pointerType: "touch", pointerId: 21 });
+  fire("pointerup", { target: t, t: Date.now() });
+  has(els.app.innerHTML, "data-adjopen", "panelen erbjuder Justera");
+  await new Promise(r => setTimeout(r, 520));
+  clickBtn({ adjopen: "sk-w42-bike-long" });
+  has(els.app.innerHTML, "Justera dosen", "justeringsformuläret öppnas");
+  has(els.app.innerHTML, "aldrig vad passet innehåller", "gränsdragningen mot coachen står i klartext");
+  els.adjMin = { value: "90" };
+  clickBtn({ adj: "shorten|sk-w42-bike-long" });
+  const so = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-bike-long"];
+  ok(so.adjust.durationMin === 90, "shorten skriver ny duration i overlayn");
+  ok(so.adjust.profile.reduce((n, p) => n + p[1], 0) <= 92, "zonprofilen skalas med");
+  has(els.app.innerHTML, "Kortat", "kortat pass bär badge"); }
+{ const t = target({ sess: "sk-w42-bike-long" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 8, clientY: 8, pointerType: "touch", pointerId: 22 });
+  fire("pointerup", { target: t, t: Date.now() });
+  has(els.app.innerHTML, "Ingrepp på detta pass", "P3: händelserna följer passet, inte bara loggen");
+  await new Promise(r => setTimeout(r, 520));
+  clickBtn({ adjopen: "sk-w42-bike-long" });
+  els.adjSport = { value: "swim" };
+  clickBtn({ adj: "substitute|sk-w42-bike-long" });
+  ok(JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-bike-long"].adjust.sport === "swim",
+     "substitute byter gren");
+  has(els.app.innerHTML, "Ersättning", "grenbyte bär badge");
+  /* Grenbytet gör passet till kandidat för simaktiviteter — återställ så senare
+     matchningstester ser oförändrat läge (testisolering, inte kosmetika). */
+  clickBtn({ adjopen: "sk-w42-bike-long" });
+  els.adjSport = { value: "bike" };
+  clickBtn({ adj: "substitute|sk-w42-bike-long" }); }
+{ const t = target({ sess: "sk-w42-run-easy" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 8, clientY: 8, pointerType: "touch", pointerId: 23 });
+  fire("pointerup", { target: t, t: Date.now() });
+  await new Promise(r => setTimeout(r, 520));
+  clickBtn({ adjopen: "sk-w42-run-easy" });
+  clickBtn({ adj: "downgrade|sk-w42-run-easy" });
+  const so = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-run-easy"];
+  ok(so.adjust.profile.every(p => p[0] <= 2), "downgrade lägger hela profilen i Z1–Z2");
+  has(els.app.innerHTML, "Nedväxlat", "nedväxlat pass bär badge"); }
 
 /* ---------- Skalet (0.7.0): flikar och vyer ---------- */
 has(els.app.innerHTML, 'data-nav="plan"', "fliken Plan finns");
@@ -135,7 +178,7 @@ has(els.app.innerHTML, 'data-nav="logg"', "fliken Logg finns");
 has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
 ok(!els.app.innerHTML.includes("Utanför plan"), "Utanför plan bor inte längre i planvyn");
 clickBtn({ nav: "installningar" });
-has(els.app.innerHTML, "next-0.8.0", "byggstämpeln bor i Inställningar (T2)");
+has(els.app.innerHTML, "next-0.8.1", "byggstämpeln bor i Inställningar (T2)");
 has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
 has(els.app.innerHTML, "Livsschema", "livsschemat är redigerbart i Inställningar (D7)");
 has(els.app.innerHTML, 'data-sched="2|Morgon"', "schemachipsen renderas per dag och fönster");

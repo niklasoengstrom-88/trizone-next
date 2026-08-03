@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.8.0 · 2026-08-03";
+export const BUILD = "next-0.8.1 · 2026-08-03";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -1316,4 +1316,35 @@ export function unlogResult(overlay, sessionId, now = "") {
   (so.events ??= []).push({ rule: "manual-unlog", session: sessionId, action: "warn",
     why: "Manuell loggning ångrad.", t: now });
   return { overlay: ov };
+}
+
+
+/* ================================================================
+   ZONKONFIG-PARITET (matchning §7, 0.8.1)
+   Utfallsremsan bygger på intervals.icu:s zonindelning. Speglar den
+   inte appens antagande är remsan fel utan att säga det. D6: historik
+   läses alltid med dagens fönster — därför granskas dagens konfig.
+   ================================================================ */
+
+export const ZONE_COUNT = 5;
+
+/* (aktiviteter) → { ok, checked, mismatches[], why }
+   Vi kan inte läsa intervals.icu:s inställningar härifrån (v32 äger anropet),
+   men aktiviteternas egen zonvektor avslöjar indelningen: fel antal zoner
+   betyder att appens femzonsmodell inte gäller för den aktiviteten. */
+export function zoneParity(activities) {
+  const checked = [], bad = [];
+  for (const a of activities ?? []) {
+    const z = a?.icu_hr_zone_times;
+    if (!Array.isArray(z) || !z.length) continue;      /* ingen zondata ⇒ inget att granska */
+    checked.push(a.id);
+    if (z.length !== ZONE_COUNT) bad.push({ id: a.id, zones: z.length });
+  }
+  if (!checked.length) return { ok: true, checked: 0, mismatches: [], why: "ingen zondata att granska" };
+  if (!bad.length) return { ok: true, checked: checked.length, mismatches: [],
+                            why: `${checked.length} aktiviteter har ${ZONE_COUNT} zoner — paritet` };
+  const shapes = [...new Set(bad.map(b => b.zones))].sort((x, y) => x - y);
+  return { ok: false, checked: checked.length, mismatches: bad,
+           why: `${bad.length} av ${checked.length} aktiviteter har ${shapes.join("/")} zoner, appen räknar med ${ZONE_COUNT}` +
+                ` — utfallsremsan kan vara felkalibrerad. Kontrollera zoninställningarna i intervals.icu.` };
 }

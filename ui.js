@@ -3,16 +3,16 @@
    Byggstämpelparitet över ALLA fem filer: core, ui, index (meta), sw (aktiv cache), plan. */
 "use strict";
 import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
-         manualAdjust, shortDate, DAYLABEL, WINDOWS, DEFAULT_CFG, resolveOrphan,
+         manualAdjust, shortDate, DAYLABEL, WINDOWS, SPORTS, DEFAULT_CFG, resolveOrphan,
          todayView, planDayOf, effectiveRpe, logResult, unlogResult, FEEL_LABEL, sessionDate,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
-         actZoneMinutes, matchDate, backupExport, backupImport } from "./core.js";
+         actZoneMinutes, matchDate, backupExport, backupImport, zoneParity } from "./core.js";
 
-export const UI_BUILD = "next-0.8.0 · 2026-08-03";
+export const UI_BUILD = "next-0.8.1 · 2026-08-03";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
-            acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null,
+            acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null,
             view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[] };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
@@ -73,6 +73,7 @@ function sessionCard(s) {
       ${s.protected ? `<span class="shield" title="Skyddat pass">◈</span>` : ""}
       ${s.status === "done" ? `<span class="donetag">✓ utfört</span>` : ""}
       ${struck ? `<span class="tag">struket</span>` : ""}
+      ${badges(s)}
       <span class="dur">${s.durationMin} min</span>
     </div>
     <div class="stitle">${esc(s.title ?? s.id)}</div>
@@ -354,12 +355,59 @@ function outcome(s) {
     const zm = actZoneMinutes(a);
     strip = zm ? zstrip(zm.map((m, z) => [z + 1, m]).filter(p => p[1] > 0))
                : `<p class="hint">Ingen zondata i aktiviteten.</p>`;
+    if (zm && S.zpar && !S.zpar.ok)                    /* §7: aldrig en tyst felkalibrerad remsa */
+      strip += `<p class="hint bad">⚠ Zonparitet saknas — ${esc(S.zpar.why)}</p>`;
   }
   return `<div class="dual">
     <div class="eyebrow">Plan</div>${zstrip(s.profile)}
     <div class="eyebrow" style="margin-top:8px">Utfört · ${min} min${km}</div>${strip}
     ${rpeRow(s)}
   </div>`;
+}
+
+/* §5d: dosen ändras i appen, innehållet via coachen. Verben är regelverkets, inte nya. */
+function adjustForm(s) {
+  const steps = [15, 20, 30, 40, 45, 60, 75, 90].filter(m => m < s.durationMin);
+  const others = SPORTS.filter(x => x !== s.sport);
+  return `<div class="logform">
+    <div class="eyebrow">Justera dosen</div>
+    <p class="hint">Ändrar hur mycket eller hur hårt — aldrig vad passet innehåller.
+      Nya intervaller kommer via coachen.</p>
+    ${steps.length ? `<label class="lfl">Korta till
+      <select id="adjMin">${steps.map(m => `<option value="${m}">${m} min</option>`).join("")}</select></label>
+      <div class="acts"><button data-adj="shorten|${esc(s.id)}">Korta</button></div>` : ""}
+    <div class="acts" style="margin-top:10px">
+      <button class="ghostbtn" data-adj="downgrade|${esc(s.id)}">Växla ned till Z2</button>
+    </div>
+    <label class="lfl">Byt gren
+      <select id="adjSport">${others.map(x =>
+        `<option value="${x}">${SPORTLABEL[x]}</option>`).join("")}</select></label>
+    <div class="acts"><button class="ghostbtn" data-adj="substitute|${esc(s.id)}">Byt gren</button>
+      <button class="ghostbtn" data-adjcancel>Stäng</button></div>
+  </div>`;
+}
+
+/* P3: posten följer passet — inte bara loggen */
+function sessEvents(s) {
+  const evs = S.overlay?.sessions?.[s.id]?.events ?? [];
+  if (!evs.length) return "";
+  return `<div class="tblock"><div class="eyebrow">Ingrepp på detta pass · ${evs.length}</div>
+    ${evs.slice(-8).reverse().map(e => `<div class="pevrow">
+      <span class="evrule">${esc(e.rule)}</span>
+      <span class="dim">${esc(String(e.t).slice(0, 10))}</span>
+      <div class="evwhy">${esc(e.why ?? e.action ?? "")}</div></div>`).join("")}</div>`;
+}
+
+/* Badges: vad som avviker från källplanen syns på kortet */
+function badges(s) {
+  const adj = S.overlay?.sessions?.[s.id]?.adjust ?? null;
+  const so = S.overlay?.sessions?.[s.id] ?? {};
+  const b = [];
+  if (adj?.durationMin) b.push(`<span class="badge">Kortat</span>`);
+  if (adj?.profile && !adj.durationMin) b.push(`<span class="badge">Nedväxlat</span>`);
+  if (adj?.sport) b.push(`<span class="badge">Ersättning</span>`);
+  if (so.moved || so.placed) b.push(`<span class="badge">Flyttat</span>`);
+  return b.join("");
 }
 
 function logForm(s) {
@@ -389,12 +437,15 @@ function sheet(s) {
     ${s.status === "done" && !s.matchedActivity ? rpeRow(s) : ""}
     ${s.text?.place ? `<p class="hint placenote">${esc(s.text.place)}</p>` : ""}
     ${S.logOpen === s.id ? logForm(s) : ""}
+    ${S.adjOpen === s.id ? adjustForm(s) : ""}
+    ${sessEvents(s)}
     <div class="acts">
       ${s.status !== "done" && s.status !== "struck" && S.logOpen !== s.id
         ? `<button data-logopen="${esc(s.id)}">Markera utfört</button>` : ""}
       ${s.status === "done" && !s.matchedActivity
         ? `<button data-unlog="${esc(s.id)}">Ångra loggning</button>` : ""}
       <button data-act="move">${placed ? "Flytta" : "Placera"}</button>
+      ${s.status !== "struck" && S.adjOpen !== s.id ? `<button data-adjopen="${esc(s.id)}">Justera</button>` : ""}
       ${placed ? `<button data-act="unplace">Till menyn</button>` : ""}
       ${s.status === "struck" ? `<button data-act="restore">Ångra strykning</button>`
                               : `<button data-act="strike">Stryk</button>`}
@@ -563,15 +614,27 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-sched],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-sched],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj]");
     if (!t) return;
     S.note = null;
+    if (t.dataset.adjopen) { S.adjOpen = t.dataset.adjopen; S.logOpen = null; render(); return; }
+    if (t.dataset.adjcancel != null) { S.adjOpen = null; render(); return; }
+    if (t.dataset.adj) {
+      const [verb, id] = t.dataset.adj.split("|");
+      const payload = verb === "shorten" ? { durationMin: Number(document.getElementById("adjMin")?.value) }
+                    : verb === "substitute" ? { sport: document.getElementById("adjSport")?.value }
+                    : {};
+      S.adjOpen = null;
+      save(manualAdjust(S.plan, S.overlay, id, verb, payload, now()),
+           verb === "shorten" ? "Kortat." : verb === "downgrade" ? "Nedväxlat till Z2." : "Gren bytt.");
+      render(); return;
+    }
     if (t.dataset.selday) {
       const [wk, d] = t.dataset.selday.split("|").map(Number);
       S.selDay = { week: wk, day: d }; render(); return;
     }
     if (t.dataset.backtoday != null) { S.selDay = null; render(); return; }
-    if (t.dataset.logopen) { S.logOpen = t.dataset.logopen; S.sel = t.dataset.logopen; render(); return; }
+    if (t.dataset.logopen) { S.logOpen = t.dataset.logopen; S.adjOpen = null; S.sel = t.dataset.logopen; render(); return; }
     if (t.dataset.logcancel != null) { S.logOpen = null; render(); return; }
     if (t.dataset.logsave) {
       const rpeRaw = document.getElementById("logRpe")?.value ?? "";
@@ -586,7 +649,7 @@ function wire() {
       save(unlogResult(S.overlay, t.dataset.unlog, now()), "Loggningen ångrad.");
       render(); return;
     }
-    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; S.selDay = null; S.logOpen = null; render(); return; }
+    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; S.selDay = null; S.logOpen = null; S.adjOpen = null; render(); return; }
     if (t.dataset.sched) {
       const [d, w] = t.dataset.sched.split("|");
       const wins = new Set(S.cfg.schedule[d] ?? []);
@@ -750,6 +813,8 @@ async function boot() {
     /* Utfall: v32:s aktivitetscache, READ-ONLY (beslut 2026-08-02) */
     const cr = readActivityCache(window.localStorage.getItem("trizone.cache.v1"));
     S.acts = cr.activities;
+    S.zpar = zoneParity(cr.activities);
+    row("zonparitet", S.zpar.why, S.zpar.ok ? "ok" : "bad");
     const nRpe = cr.activities.filter(a => a.icu_rpe != null || a.perceived_exertion != null).length;
     row("aktiviteter", cr.error ? cr.error
         : `${cr.activities.length} lästa ur v32-cachen (${cr.path}, read-only)`
