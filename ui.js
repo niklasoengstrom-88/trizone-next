@@ -11,10 +11,10 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.9.0 · 2026-08-03";
+export const UI_BUILD = "next-0.9.1 · 2026-08-03";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
-            acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null,
+            acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
             eq:[], warns:[], seen:new Set(), modeOpen:false,
             view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[] };
 const actById = id => S.acts.find(a => a.id === id);
@@ -24,7 +24,10 @@ let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 const SPORTLABEL = { swim:"SIM", bike:"CYKEL", run:"LÖP", strength:"STYRKA" };
 const today = () => (globalThis.__TZ_TODAY ?? new Date().toISOString()).slice(0, 10);
-const now = () => new Date().toISOString();
+const now = () => {                        /* samma klocka som today() — även under test */
+  const t = new Date().toISOString();
+  return globalThis.__TZ_TODAY ? globalThis.__TZ_TODAY.slice(0, 10) + t.slice(10) : t;
+};
 const app = () => document.getElementById("app");
 const findSess = (id) => {
   for (const wk of planWeeks(S.plan)) {
@@ -85,12 +88,11 @@ function sessionCard(s) {
 }
 
 /* ---------- Vyväxling (0.7.0): Plan · Logg · Inställningar ---------- */
-const NAV = [["idag", "Idag"], ["plan", "Plan"], ["logg", "Logg"], ["installningar", "Inställningar"]];
+const NAV = [["idag", "Idag"], ["plan", "Plan"], ["installningar", "Inställningar"]];
 function render() {
   const h = [];
   if (S.view === "idag") renderIdag(h);
   else if (S.view === "plan") renderPlan(h);
-  else if (S.view === "logg") renderLogg(h);
   else renderSettings(h);
   h.push(`<nav class="tabs" aria-label="Huvudnavigering">` + NAV.map(([id, label]) =>
     `<button class="tab${S.view === id ? " active" : ""}" data-nav="${id}"
@@ -264,7 +266,7 @@ function renderPlan(h) {
       </header>`);
 
     for (const d of v.days) {
-      const trainday = (S.cfg.schedule[d.day] ?? []).length > 0;
+      const trainday = true;
       h.push(`<section class="day${d.date === today() ? " today" : ""}${d.sessions.length ? "" : " empty"}${trainday ? "" : " off"}"
           data-day="${wk}|${d.day}">
         <div class="dhead"><span class="dname">${d.label}</span><span class="ddate">${shortDate(d.date)}</span>
@@ -281,40 +283,44 @@ function renderPlan(h) {
     h.push(`</section>`);
   }
 
+  offplanSection(h);
   h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
 }
 
-/* ---------- Logg: händelser + utanför plan ---------- */
-function renderLogg(h) {
-  h.push(`<header class="viewhead"><h1>Logg</h1></header>`);
-
-  if (S.unplanned.length) {
-    h.push(`<section class="menu offplan"><div class="eyebrow">Utanför plan · ${S.unplanned.length}</div>
-      <p class="hint">Aktiviteter utan pass i planen. Räknas, men jagas inte.</p>`);
-    for (const id of S.unplanned) {
-      const a = actById(id); if (!a) continue;
-      h.push(`<div class="oprow"><span class="dim">${esc(matchDate(a.start_date_local) ?? "")}</span>
-        <span>${esc(a.name || a.type)}</span><span class="dim">${Math.round(a.moving_time / 60)} min</span></div>`);
-    }
-    h.push(`</section>`);
+/* ---------- Utanför plan (bor i Plan-vyn, beslut 0.9.1) ---------- */
+function offplanSection(h) {
+  if (!S.unplanned.length) return;
+  h.push(`<section class="menu offplan"><div class="eyebrow">Utanför plan · ${S.unplanned.length}</div>
+    <p class="hint">Aktiviteter utan pass i planen. Räknas, men jagas inte.</p>`);
+  for (const id of S.unplanned) {
+    const a = actById(id); if (!a) continue;
+    h.push(`<div class="oprow"><span class="dim">${esc(matchDate(a.start_date_local) ?? "")}</span>
+      <span>${esc(a.name || a.type)}</span><span class="dim">${Math.round(a.moving_time / 60)} min</span></div>`);
   }
+  h.push(`</section>`);
+}
 
+/* ---------- Händelselogg (knappsektion i Inställningar, beslut 0.9.1) ---------- */
+function eventLog(h) {
   const evs = [];
   for (const [id, so] of Object.entries(S.overlay?.sessions ?? {}))
     for (const e of so.events ?? []) evs.push({ ...e, session: e.session ?? id });
   for (const e of S.overlay?.modes?.log ?? []) evs.push(e);
   evs.sort((a, b) => String(b.t).localeCompare(String(a.t)));
-  h.push(`<section class="evlog"><div class="eyebrow">Händelser · ${evs.length}</div>
-    <p class="hint">Varje ingrepp — motorns, matchningens och ditt eget — lämnar en läsbar post. Inget skrivs om.</p>`);
-  if (!evs.length) h.push(`<p class="hint">Inga händelser ännu.</p>`);
-  for (const e of evs.slice(0, 120)) {
-    const s = e.session ? findSess(e.session) : null;
-    h.push(`<div class="evrow">
-      <div class="evtop"><span class="evrule">${esc(e.rule)}</span>
-        <span class="dim">${esc(String(e.t).slice(0, 10))}</span></div>
-      ${s ? `<div class="evsess">${esc(s.title ?? e.session)}</div>` : e.session ? `<div class="evsess dim">${esc(e.session)}</div>` : ""}
-      <div class="evwhy">${esc(e.why ?? e.action ?? "")}</div>
-    </div>`);
+  h.push(`<section class="setsec"><div class="eyebrow">Händelselogg</div>
+    <p class="hint">Varje ingrepp — motorns, matchningens och ditt eget. Inget skrivs om.</p>
+    <div class="acts"><button class="ghostbtn" data-evlog>${S.evOpen ? "Dölj" : "Visa"} händelser · ${evs.length}</button></div>`);
+  if (S.evOpen) {
+    if (!evs.length) h.push(`<p class="hint">Inga händelser ännu.</p>`);
+    for (const e of evs.slice(0, 120)) {
+      const s = e.session ? findSess(e.session) : null;
+      h.push(`<div class="evrow">
+        <div class="evtop"><span class="evrule">${esc(e.rule)}</span>
+          <span class="dim">${esc(String(e.t).slice(0, 10))}</span></div>
+        ${s ? `<div class="evsess">${esc(s.title ?? e.session)}</div>` : e.session ? `<div class="evsess dim">${esc(e.session)}</div>` : ""}
+        <div class="evwhy">${esc(e.why ?? e.action ?? "")}</div>
+      </div>`);
+    }
   }
   h.push(`</section>`);
 }
@@ -322,17 +328,6 @@ function renderLogg(h) {
 /* ---------- Inställningar: bindningar, paritet, backup, föräldralösa (T2, D7) ---------- */
 function renderSettings(h) {
   h.push(`<header class="viewhead"><span class="wm">TRIZONE</span><h1>Inställningar</h1></header>`);
-
-  h.push(`<section class="setsec"><div class="eyebrow">Livsschema</div>
-    <p class="hint">Dagar och fönster du brukar träna. Framhäver i vyn och styr motorns flyttförslag — spärrar aldrig en placering.</p>`);
-  for (let d = 0; d < 7; d++) {
-    const wins = S.cfg.schedule[d] ?? [];
-    h.push(`<div class="schedrow"><span class="dname">${DAYLABEL[d]}</span>` +
-      WINDOWS.map(w => `<button class="schedchip${wins.includes(w) ? " on" : ""}"
-        data-sched="${d}|${w}" aria-pressed="${wins.includes(w)}">${w}</button>`).join("") + `</div>`);
-  }
-  if (S.cfgError) h.push(`<p class="hint bad">${esc(S.cfgError)}</p>`);
-  h.push(`</section>`);
 
   h.push(`<section class="setsec"><div class="eyebrow">Motorvärden</div>
     <p class="hint">Dina gränser, inte appens sanningar. Tomt fält = standardvärdet.</p>`);
@@ -360,6 +355,8 @@ function renderSettings(h) {
     }
     h.push(`</section>`);
   }
+
+  eventLog(h);
 
   h.push(`<section class="setsec backup"><div class="eyebrow">Säkerhetskopia</div>
     <div class="acts"><button data-download>Ladda ned fil</button>
@@ -422,15 +419,18 @@ function adjustForm(s) {
   </div>`;
 }
 
-/* P3: posten följer passet — inte bara loggen */
+/* P3: posten följer passet — hopfälld tills du ber om den (beslut 0.9.1) */
 function sessEvents(s) {
   const evs = S.overlay?.sessions?.[s.id]?.events ?? [];
   if (!evs.length) return "";
+  if (S.histOpen !== s.id)
+    return `<div class="acts"><button class="ghostbtn" data-histopen="${esc(s.id)}">Historik · ${evs.length}</button></div>`;
   return `<div class="tblock"><div class="eyebrow">Ingrepp på detta pass · ${evs.length}</div>
-    ${evs.slice(-8).reverse().map(e => `<div class="pevrow">
+    ${evs.slice(-10).reverse().map(e => `<div class="pevrow">
       <span class="evrule">${esc(e.rule)}</span>
       <span class="dim">${esc(String(e.t).slice(0, 10))}</span>
-      <div class="evwhy">${esc(e.why ?? e.action ?? "")}</div></div>`).join("")}</div>`;
+      <div class="evwhy">${esc(e.why ?? e.action ?? "")}</div></div>`).join("")}
+    <div class="acts"><button class="ghostbtn" data-histclose>Dölj historik</button></div></div>`;
 }
 
 /* Badges: vad som avviker från källplanen syns på kortet */
@@ -532,7 +532,14 @@ function engineFlags() {
 }
 
 function warnStep(h) {                     /* varningstrappan (designspråk §7) */
-  const unseen = S.warns.filter(w => !S.seen.has(w.rule + "|" + w.session));
+  const uniq = [], seenKey = new Set();
+  for (const w of S.warns) {
+    const k = w.rule + "|" + w.session + "|" + w.why;
+    if (!seenKey.has(k)) { seenKey.add(k); uniq.push(w); }
+  }
+  const dups = S.warns.length - uniq.length;
+  if (dups > 0) console.warn(`[TRIZONE] ${dups} dubblettvarningar filtrerade — rapportera med säkerhetskopia`);
+  const unseen = uniq.filter(w => !S.seen.has(w.rule + "|" + w.session));
   if (!unseen.length) return;
   h.push(`<section class="warnbanner"><div class="eyebrow">Motorn varnar · ${unseen.length}</div>
     ${unseen.map(w => `<div class="wrow"><span class="evrule">${esc(w.rule)}</span>
@@ -706,9 +713,12 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-sched],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose]");
     if (!t) return;
     S.note = null;
+    if (t.dataset.evlog != null) { S.evOpen = !S.evOpen; render(); return; }
+    if (t.dataset.histopen) { S.histOpen = t.dataset.histopen; render(); return; }
+    if (t.dataset.histclose != null) { S.histOpen = null; render(); return; }
     if (t.dataset.mode) {
       const rule = t.dataset.mode;
       const on = (S.overlay?.modes?.active ?? []).find(a => a.rule === rule);
@@ -800,16 +810,7 @@ function wire() {
       save(unlogResult(S.overlay, t.dataset.unlog, now()), "Loggningen ångrad.");
       render(); return;
     }
-    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; S.selDay = null; S.logOpen = null; S.adjOpen = null; render(); return; }
-    if (t.dataset.sched) {
-      const [d, w] = t.dataset.sched.split("|");
-      const wins = new Set(S.cfg.schedule[d] ?? []);
-      wins.has(w) ? wins.delete(w) : wins.add(w);
-      S.cfg.schedule[d] = WINDOWS.filter(x => wins.has(x));
-      const r = S.store.saveCfg(S.cfg);
-      if (!r.ok) S.note = { text: r.error, bad: true };
-      render(); return;
-    }
+    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; S.selDay = null; S.logOpen = null; S.adjOpen = null; S.histOpen = null; render(); return; }
     if (t.dataset.orphan) {
       const [id, decision] = t.dataset.orphan.split("|");
       S.overlay = resolveOrphan(S.overlay, id, decision, now());

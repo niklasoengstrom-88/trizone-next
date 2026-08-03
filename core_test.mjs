@@ -1018,17 +1018,37 @@ import { ENGINE_FIELDS, athleteGuard, activateMode, LIFE_MODES } from "./core.js
   ok(struck.every(id => off.sessions[id].status !== "struck"),
      "avaktivering återställer exakt föregående tillstånd (P5)"); }
 
-/* ---------- Regression 0.9.0: öppet läge utan slutdatum ---------- */
-{ const a = activateMode({}, "mode-vacation", { from: "2026-10-12" }, NOW);   /* to saknas */
-  const r = applyRules(plan, a.overlay, {}, [], NOW);
-  ok(r.actions.some(x => x.rule === "mode-vacation"),
-     "läge utan slutdatum gäller tills det hävs — tystades tidigare helt (0.9.0-buggen)");
-  const bounded = activateMode({}, "mode-vacation", { from: "2026-10-12", to: "2026-10-18" }, NOW);
-  const rb = applyRules(plan, bounded.overlay, {}, [], NOW);
-  ok(rb.actions.some(x => x.rule === "mode-vacation"), "avgränsat spann fungerar oförändrat");
-  const later = activateMode({}, "mode-vacation", { from: "2027-01-01" }, NOW);
-  ok(!applyRules(plan, later.overlay, {}, [], NOW).actions.some(x => x.rule === "mode-vacation"),
-     "läge som börjar efter planen rör inga pass"); }
+/* ---------- Regression 0.9.0 (två lärdomar): öppna lägen ---------- */
+{ /* torsdag 15/10 som "idag" — run-thr-dagen i referensplanen */
+  const T = "2026-10-15T08:00:00";
+  const a = activateMode({}, "illness-stop", { from: "2026-10-15" }, T);
+  const r = applyRules(plan, a.overlay, {}, [], T);
+  const struck = r.actions.filter(x => x.action === "strike").map(x => x.session);
+  ok(struck.includes("sk-w42-run-thr"), "öppet sjukläge stryker dagens pass");
+  ok(!struck.includes("sk-w42-bike-long") && !struck.includes("sk-w43-run-thr"),
+     "…men ALDRIG framtiden — öppna spann verkar dag för dag (0.9.0-buggen: 21 pass ströks)");
+  const bounded = activateMode({}, "illness-stop", { from: "2026-10-15", to: "2026-10-18" }, T);
+  const rb = applyRules(plan, bounded.overlay, {}, [], T);
+  ok(rb.actions.some(x => x.action === "strike" && x.session === "sk-w42-bike-long"),
+     "uttryckligt slutdatum täcker sitt spann — lördagen stryks"); }
+{ /* på → av → på samma dygn: läget måste leva igen (H4 gäller inte modeKey) */
+  const T = "2026-10-15T08:00:00";
+  const a1 = activateMode({}, "mode-vacation", { from: "2026-10-15" }, T);
+  const r1 = applyRules(plan, a1.overlay, {}, [], T);
+  let ov = applyActions(a1.overlay, r1.actions.filter(x => x.session && x.action !== "warn"));
+  ov = deactivateMode(ov, "mode-vacation@2026-10-15", T);
+  const a2 = activateMode(ov, "mode-vacation", { from: "2026-10-15" }, T);
+  const r2 = applyRules(plan, a2.overlay, {}, [], T);
+  ok(r2.actions.filter(x => x.session && x.action !== "warn").length > 0,
+     "omaktiverat läge ingriper igen — H4 spärrar automatik, aldrig din hand (0.9.0-buggen)"); }
+{ const r = applyRules(plan, {}, {}, [], NOW);
+  const hl = r.actions.find(a => a.rule === "heavy-legs");
+  ok(hl && !hl.why.includes("sk-w42") && hl.why.includes("("),
+     "nivå 3-texter talar titlar och dagnamn — aldrig pass-id"); }
+{ const r = zoneParity([{ id: 1, type: "Swim", icu_hr_zone_times: [1,2,3,4,5,6,7] },
+                        { id: 2, type: "Run", icu_hr_zone_times: [1,2,3,4,5] }]);
+  ok(r.why.includes("swim 1"), "paritetsvarningen pekar ut grenen — man vet var man ska leta");
+  ok(r.why.includes("PULS"), "…och att det är pulszoner som avses, inte pace"); }
 
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester

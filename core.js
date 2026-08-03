@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.9.0 · 2026-08-03";
+export const BUILD = "next-0.9.1 · 2026-08-03";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -303,12 +303,14 @@ function weekSpan(plan, weekNo) {                    /* → [måndag, söndag] e
   const end = new Date(d); end.setUTCDate(d.getUTCDate() + 6);
   return [d.toISOString().slice(0, 10), end.toISOString().slice(0, 10)];
 }
-const OPEN_END = "9999-12-31";                       /* läge utan slutdatum gäller tills det hävs */
-function sessionInSpan(plan, s, from, to) {          /* oplacerat pass: veckan överlappar spannet */
-  const hi = to ?? OPEN_END;                         /* 0.9.0-buggen: null tystade hela läget */
+/* Läge utan slutdatum verkar från 'from' till IDAG — dag för dag så länge det
+   är aktivt. Framtiden rörs först när den blir nutid. (0.9.0-lärdomen nr 2:
+   OPEN_END-sentineln strök hela framtiden vid "Sjuk" — 21 pass på ett tryck.) */
+function sessionInSpan(plan, s, from, to, nowDate) {
+  const hi = to ?? nowDate ?? from;
   const d = sessionDate(plan, s);
   if (d) return d >= from && d <= hi;
-  const ws = weekSpan(plan, s.week);
+  const ws = weekSpan(plan, s.week);                 /* oplacerat: veckan överlappar spannet */
   return !!ws && ws[0] <= hi && ws[1] >= from;
 }
 function slotClock(plan, s) {                        /* nominell absoluttid i timmar, eller null */
@@ -345,7 +347,10 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     (ov.sessions?.[id]?.events ?? []).some(e => e.rule === rule && String(e.t).slice(0, 10) === nowDate);
 
   const push = (rule, level, id, action, why, payload = {}, orig = {}, extra = {}) => {
-    if (id && firedToday(rule, id)) return false;
+    /* H4 vaktar automatiska triggers. Användarstyrda lägen (modeKey) är redan
+       bekräftade — spärra dem inte, annars dör ett omaktiverat läge samma dygn
+       (0.9.0-buggen: på/av/på ⇒ tyst dött läge). */
+    if (id && !extra.modeKey && firedToday(rule, id)) return false;
     actions.push({ rule, level, session: id, action, why, payload, orig, t: now, ...extra });
     return true;
   };
@@ -371,7 +376,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* illness-stop: allt i spannet stryks, även protected och C — feber tränas aldrig igenom */
   for (const m of modes.filter(m => m.rule === "illness-stop")) {
     for (const s of list()) {
-      if (s.status === "struck" || !sessionInSpan(plan, s, m.from, m.to)) continue;
+      if (s.status === "struck" || !sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
       if (push("illness-stop", 1, s.id, "strike",
                "Sjukdomsstopp: allt i spannet stryks. Feber tränas aldrig igenom.",
                {}, { status: s.status ?? "planned" },
@@ -386,7 +391,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     const sub = b.substitute ?? {};
     for (const s of list()) {
       if (s.status === "struck" || !sports.includes(s.sport)) continue;
-      if (!sessionInSpan(plan, s, m.from, m.to)) continue;
+      if (!sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
       const target = isQuality(s) ? sub.quality : sub.easy;
       if (!target || target === s.sport) continue;
       if (push("tissue-freeze", 1, s.id, "substitute",
@@ -438,7 +443,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* mode-vacation: B stryks (ej protected), A till underhållsdos. C är luft. */
   for (const m of modes.filter(m => m.rule === "mode-vacation")) {
     for (const s of list()) {
-      if (s.status === "struck" || s.prio === "C" || !sessionInSpan(plan, s, m.from, m.to)) continue;
+      if (s.status === "struck" || s.prio === "C" || !sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
       if (s.prio === "B" && !s.protected) {
         if (push("mode-vacation", 2, s.id, "strike",
                  "Semester: B-pass stryks och jagas inte ikapp.",
@@ -454,7 +459,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   for (const m of modes.filter(m => m.rule === "mode-reduced")) {
     for (const s of list()) {
       if (s.status === "struck" || s.prio !== "B" || s.protected) continue;
-      if (!sessionInSpan(plan, s, m.from, m.to)) continue;
+      if (!sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
       if (push("mode-reduced", 2, s.id, "strike",
                "Reducerad vecka: komprimeras till A-passen. B stryks.",
                {}, { status: s.status ?? "planned" }, { modeKey: modeKey(m) })) s.status = "struck";
@@ -519,6 +524,8 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     shortenTo(s, f.factor ?? 0.8, "volume-cap", 2, "Volymtak: passet kortas.");
   }
 
+  const sname = (x) => `${x.title ?? x.id}${x.day != null ? ` (${DAYNAMES[x.day]})` : ""}`;
+
   /* ---------- NIVÅ 3 — optimering (endast warn) ---------- */
   const lvl3 = [];
   const placed = list().filter(s => s.status !== "struck" && slotClock(plan, s) != null);
@@ -529,14 +536,14 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     if (h == null || h > 24) continue;
     if (isQuality(a) && isQuality(b)) {
       lvl3.push({ rule: "quality-spacing", level: 3, session: (a.day <= b.day ? b : a).id, action: "warn",
-        why: `Två kvalitetspass inom 24 h (${a.id} · ${b.id}). En dags mellanrum rekommenderas.`,
+        why: `Två kvalitetspass inom 24 h: ${sname(a)} och ${sname(b)}. En dags mellanrum rekommenderas.`,
         payload: {}, orig: {}, t: now, pair: [a.id, b.id] });
     }
     const st = a.sport === "strength" ? a : b.sport === "strength" ? b : null;
     const q  = st === a ? b : a;
     if (st && st.sport === "strength" && isQuality(q)) {
       lvl3.push({ rule: "heavy-legs", level: 3, session: q.id, action: "warn",
-        why: `Tunga ben: styrka (${st.id}) inom 24 h från kvalitet (${q.id}) — överväg ordningsbyte.`,
+        why: `Tunga ben: styrkan ${sname(st)} ligger inom ett dygn från ${sname(q)} — överväg ordningsbyte.`,
         payload: {}, orig: {}, t: now, pair: [st.id, q.id] });
     }
   }
@@ -1367,15 +1374,18 @@ export function zoneParity(activities) {
     const z = a?.icu_hr_zone_times;
     if (!Array.isArray(z) || !z.length) continue;      /* ingen zondata ⇒ inget att granska */
     checked.push(a.id);
-    if (z.length !== ZONE_COUNT) bad.push({ id: a.id, zones: z.length });
+    if (z.length !== ZONE_COUNT) bad.push({ id: a.id, zones: z.length, sport: SPORT_MAP[a.type] ?? a.type });
   }
   if (!checked.length) return { ok: true, checked: 0, mismatches: [], why: "ingen zondata att granska" };
   if (!bad.length) return { ok: true, checked: checked.length, mismatches: [],
                             why: `${checked.length} aktiviteter har ${ZONE_COUNT} zoner — paritet` };
   const shapes = [...new Set(bad.map(b => b.zones))].sort((x, y) => x - y);
+  const bySport = {};
+  for (const b of bad) bySport[b.sport ?? "?"] = (bySport[b.sport ?? "?"] ?? 0) + 1;
+  const dist = Object.entries(bySport).map(([k, n]) => `${k} ${n}`).join(" · ");
   return { ok: false, checked: checked.length, mismatches: bad,
-           why: `${bad.length} av ${checked.length} aktiviteter har ${shapes.join("/")} zoner, appen räknar med ${ZONE_COUNT}` +
-                ` — utfallsremsan kan vara felkalibrerad. Kontrollera zoninställningarna i intervals.icu.` };
+           why: `${bad.length} av ${checked.length} aktiviteter har ${shapes.join("/")} zoner (${dist}), appen räknar med ${ZONE_COUNT}` +
+                ` — utfallsremsan kan vara felkalibrerad för dessa. Kontrollera PULSzonerna (inte pace) per gren i intervals.icu.` };
 }
 
 

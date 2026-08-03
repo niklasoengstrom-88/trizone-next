@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.9.0 · 2026-08-03
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.9.1 · 2026-08-03
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.9.0 · 2026-08-03" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.9.1 · 2026-08-03" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -150,8 +150,12 @@ clickBtn({ nav: "plan" });
 { const t = target({ sess: "sk-w42-bike-long" }, ["data-sess"], 42);
   fire("pointerdown", { button: 0, target: t, clientX: 8, clientY: 8, pointerType: "touch", pointerId: 22 });
   fire("pointerup", { target: t, t: Date.now() });
-  has(els.app.innerHTML, "Ingrepp på detta pass", "P3: händelserna följer passet, inte bara loggen");
+  has(els.app.innerHTML, "data-histopen", "historiken är hopfälld bakom knapp (0.9.1)");
+  ok(!els.app.innerHTML.includes("Ingrepp på detta pass"), "…och listan renderas inte oombedd");
   await new Promise(r => setTimeout(r, 520));
+  clickBtn({ histopen: "sk-w42-bike-long" });
+  has(els.app.innerHTML, "Ingrepp på detta pass", "P3: händelserna följer passet — när du ber om dem");
+  clickBtn({ histclose: "" });
   clickBtn({ adjopen: "sk-w42-bike-long" });
   els.adjSport = { value: "swim" };
   clickBtn({ adj: "substitute|sk-w42-bike-long" });
@@ -193,57 +197,48 @@ has(els.app.innerHTML, "aldrig blockgränser", "strukturskyddet står i klartext
 { clickBtn({ mode: "mode-vacation" });
   const ov = JSON.parse(mem.get("trizone.overlay.v1"));
   ok(ov.modes.active.some(m => m.rule === "mode-vacation"), "läget aktiveras och sparas");
-  const touched = Object.entries(ov.sessions).filter(([, v]) => v.adjust?.durationMin || v.status === "struck");
-  ok(touched.length > 0, "motorn ingriper: A-pass till underhållsdos, B-pass stryks");
-  ok(touched.every(([, v]) => v.events.some(e => e.rule === "mode-vacation")),
+  ok(ov.sessions["sk-w42-run-thr"]?.adjust?.durationMin,
+     "motorn ingriper i DAGENS pass: A-passet går till underhållsdos");
+  ok(ov.sessions["sk-w42-run-thr"].events.some(e => e.rule === "mode-vacation"),
      "P3: varje ingrepp lämnar läsbar post");
+  ok(ov.sessions["sk-w42-bike-long"]?.adjust?.durationMin === 90 &&
+     !ov.sessions["sk-w42-bike-long"].events.some(e => e.rule === "mode-vacation"),
+     "0.9.0-buggen: öppet läge rör ALDRIG framtiden — lördagen är orörd av motorn");
   ok(!ov.sessions["sk-w42-swim-css"]?.status,
-     "läge som börjar idag rör inte gårdagens pass — inga retroaktiva ingrepp");
-  const before = touched.map(([id, v]) => [id, v.adjust?.durationMin ?? null, v.status ?? null]);
+     "…och inte gårdagen heller — inga retroaktiva ingrepp");
   clickBtn({ nav: "idag" });
   has(els.app.innerHTML, "modechip", "aktivt läge syns på Idag");
   clickBtn({ nav: "plan" });
   clickBtn({ mode: "mode-vacation" });
   const off = JSON.parse(mem.get("trizone.overlay.v1"));
-  /* §9: motorns ingrepp återställs — men pass du själv rört behåller DIN version */
-  const mineToo = new Set(["sk-w42-bike-long", "sk-w42-run-easy"]);   /* justerade för hand i §5d-blocket */
-  const pure = before.map(([id]) => id).filter(id => !mineToo.has(id));
-  ok(pure.length > 0 && pure.every(id => !off.sessions[id].adjust?.durationMin && off.sessions[id].status !== "struck"),
+  ok(!off.sessions["sk-w42-run-thr"].adjust?.durationMin,
      "avaktivering återställer exakt det motorn gjorde (P5)");
-  ok(off.sessions["sk-w42-bike-long"].adjust?.durationMin === 90,
-     "pass du justerat för hand behåller din version — handen vinner över motorn (§9)");
-  ok(off.sessions["sk-w42-bike-long"].events.some(e => String(e.rule).startsWith("undo:")),
-     "och valet redovisas i passets historik");
+  ok(off.sessions["sk-w42-run-thr"].events.some(e => String(e.rule).startsWith("undo:")),
+     "och återställningen redovisas i passets historik");
   ok(!off.modes.active.length, "läget är borta"); }
 
 /* ---------- Skalet (0.7.0): flikar och vyer ---------- */
 has(els.app.innerHTML, 'data-nav="plan"', "fliken Plan finns");
-has(els.app.innerHTML, 'data-nav="logg"', "fliken Logg finns");
+ok(!els.app.innerHTML.includes('data-nav="logg"'), "Logg-fliken är borttagen (beslut 0.9.1)");
 has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
-ok(!els.app.innerHTML.includes("Utanför plan"), "Utanför plan bor inte längre i planvyn");
+
 clickBtn({ nav: "installningar" });
-has(els.app.innerHTML, "next-0.9.0", "byggstämpeln bor i Inställningar (T2)");
+has(els.app.innerHTML, "next-0.9.1", "byggstämpeln bor i Inställningar (T2)");
 has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
-has(els.app.innerHTML, "Livsschema", "livsschemat är redigerbart i Inställningar (D7)");
-has(els.app.innerHTML, 'data-sched="2|Morgon"', "schemachipsen renderas per dag och fönster");
+ok(!els.app.innerHTML.includes("Livsschema"), "livsschema-editorn är borttagen (beslut 0.9.1)");
+has(els.app.innerHTML, "data-evlog", "händelseloggen nås via knapp i Inställningar");
 has(els.app.innerHTML, "data-buzztest", "haptiktestet bor i Inställningar");
 has(els.app.innerHTML, "Föräldralösa överlagringar · 1", "föräldralösa får en beslutsvy");
 has(els.app.innerHTML, "forsvunnet-pass-1", "den föräldralösa posten visas med sitt id");
-{ clickBtn({ sched: "2|Morgon" });
-  const cfg = JSON.parse(mem.get("trizone.next.cfg.v1"));
-  ok(cfg.schedule["2"].includes("Morgon"), "schemaändring sparas i cfg-nyckeln");
-  clickBtn({ sched: "2|Morgon" });
-  ok(!JSON.parse(mem.get("trizone.next.cfg.v1")).schedule["2"].includes("Morgon"),
-     "schemachip går att slå av igen"); }
+{ clickBtn({ evlog: "" });
+  has(els.app.innerHTML, "match-auto", "händelseloggen expanderar och visar posterna");
+  clickBtn({ evlog: "" });
+  ok(!els.app.innerHTML.includes("evrow"), "…och går att fälla ihop igen"); }
 { clickBtn({ orphan: "forsvunnet-pass-1|archive" });
   const ov = JSON.parse(mem.get("trizone.overlay.v1"));
   ok(!ov.orphans.some(o => o.id === "forsvunnet-pass-1") && ov.archive["forsvunnet-pass-1"],
      "arkivering flyttar posten och sparas");
   ok(!els.app.innerHTML.includes("Föräldralösa"), "tömd lista försvinner ur vyn"); }
-clickBtn({ nav: "logg" });
-has(els.app.innerHTML, "Händelser", "Loggen visar händelselistan");
-has(els.app.innerHTML, "orphan", "arkiveringsbeslutet är en läsbar post i loggen (P3)");
-has(els.app.innerHTML, "Utanför plan", "Utanför plan bor i Loggen");
 clickBtn({ nav: "plan" });
 
 /* ---------- Löpande listan ---------- */
@@ -268,9 +263,7 @@ has(els.app.innerHTML, "✓ utfört", "exakt match ⇒ passet märks utfört uta
   ok(so?.match?.activityId === 901, "auto-länken är sparad i overlayn");
   ok(so.events.some(e => e.rule === "match-auto"), "P3: tyst länk redovisas i händelseloggen"); }
 has(els.app.innerHTML, "Att bekräfta", "mittzonskandidaten blir en fråga, aldrig ett tyst facit");
-clickBtn({ nav: "logg" });
-has(els.app.innerHTML, "Utanför plan", "främmande aktivitet listas utanför plan — i Loggen");
-clickBtn({ nav: "plan" });
+has(els.app.innerHTML, "Utanför plan", "främmande aktivitet listas utanför plan — i Plan-vyn");
 { fire("click", { target: target({ nolink: "sk-w42-bike-long|902" }, ["data-nolink"]) });
   const so = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-bike-long"];
   ok(so?.matchDrop?.includes(902), "Nej sparas — paret föreslås aldrig igen");
