@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.6.3 · 2026-08-03
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.7.0 · 2026-08-03
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -6,7 +6,7 @@ import fs from "node:fs";
 let pass = 0, fail = 0;
 const ok = (c, m) => c ? (pass++, true) : (fail++, console.error("  ✗ " + m), false);
 const has = (s, txt, m) => ok(String(s).includes(txt), `${m} (hittade inte "${txt}")`);
-const plan = JSON.parse(fs.readFileSync(new URL("./plan.json", import.meta.url)));
+const plan = JSON.parse(fs.readFileSync(new URL("./plan_ref.json", import.meta.url)));
 
 /* Geometri: 21 dagrader i följd — vecka wi, dag d på y = 100 + (wi*7+d)*80 */
 const WEEKS = [42, 43, 44];
@@ -25,9 +25,12 @@ const mkRoot = () => ({
     ? WEEKS.flatMap((wk, wi) => [...Array(7)].map((_, d) => fakeEl({ day: `${wk}|${d}` }, dayRect(wi, d))))
     : []
 });
-const els = { app: mkRoot(), diag: mkRoot() };
+const els = { app: mkRoot() };
 
-const mem = new Map([["trizone.cache.v1", JSON.stringify({ data: { athlete: {}, activities: [
+const mem = new Map([
+  ["trizone.overlay.v1", JSON.stringify({ planVersion: "gammal-plan",
+    sessions: { "forsvunnet-pass-1": { status: "done" } }, placed: {}, patches: [], modes: {}, orphans: [], archive: {} })],
+  ["trizone.cache.v1", JSON.stringify({ data: { athlete: {}, activities: [
   { id: 901, type: "Run",  name: "Löpintervaller tröskel", start_date_local: "2026-10-15T18:05:00",
     moving_time: 52 * 60, distance: 10400, icu_hr_zone_times: [720, 360, 120, 1500, 420] },
   { id: 902, type: "Ride", name: "Kort cykel", start_date_local: "2026-10-16T18:00:00",
@@ -40,7 +43,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.6.3 · 2026-08-03" }),
+  querySelector: () => ({ content: "next-0.7.0 · 2026-08-03" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -75,8 +78,37 @@ const tapCard = (id, wk = 42) => { const t = target({ sess: id }, ["data-sess"],
   ghostClick();                      /* värsta fallet: spökklicket landar på Stryk */ };
 const clickBtn = dataset => fire("click", { target: target(dataset, Object.keys(dataset).map(k => "data-" + k)) });
 
+/* ---------- Skalet (0.7.0): flikar och vyer ---------- */
+has(els.app.innerHTML, 'data-nav="plan"', "fliken Plan finns");
+has(els.app.innerHTML, 'data-nav="logg"', "fliken Logg finns");
+has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
+ok(!els.app.innerHTML.includes("Utanför plan"), "Utanför plan bor inte längre i planvyn");
+clickBtn({ nav: "installningar" });
+has(els.app.innerHTML, "next-0.7.0", "byggstämpeln bor i Inställningar (T2)");
+has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
+has(els.app.innerHTML, "Livsschema", "livsschemat är redigerbart i Inställningar (D7)");
+has(els.app.innerHTML, 'data-sched="2|Morgon"', "schemachipsen renderas per dag och fönster");
+has(els.app.innerHTML, "data-buzztest", "haptiktestet bor i Inställningar");
+has(els.app.innerHTML, "Föräldralösa överlagringar · 1", "föräldralösa får en beslutsvy");
+has(els.app.innerHTML, "forsvunnet-pass-1", "den föräldralösa posten visas med sitt id");
+{ clickBtn({ sched: "2|Morgon" });
+  const cfg = JSON.parse(mem.get("trizone.next.cfg.v1"));
+  ok(cfg.schedule["2"].includes("Morgon"), "schemaändring sparas i cfg-nyckeln");
+  clickBtn({ sched: "2|Morgon" });
+  ok(!JSON.parse(mem.get("trizone.next.cfg.v1")).schedule["2"].includes("Morgon"),
+     "schemachip går att slå av igen"); }
+{ clickBtn({ orphan: "forsvunnet-pass-1|archive" });
+  const ov = JSON.parse(mem.get("trizone.overlay.v1"));
+  ok(!ov.orphans.some(o => o.id === "forsvunnet-pass-1") && ov.archive["forsvunnet-pass-1"],
+     "arkivering flyttar posten och sparas");
+  ok(!els.app.innerHTML.includes("Föräldralösa"), "tömd lista försvinner ur vyn"); }
+clickBtn({ nav: "logg" });
+has(els.app.innerHTML, "Händelser", "Loggen visar händelselistan");
+has(els.app.innerHTML, "orphan", "arkiveringsbeslutet är en läsbar post i loggen (P3)");
+has(els.app.innerHTML, "Utanför plan", "Utanför plan bor i Loggen");
+clickBtn({ nav: "plan" });
+
 /* ---------- Löpande listan ---------- */
-has(els.diag.innerHTML, "next-0.6.3", "paritetskortet renderas");
 has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
 has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
 has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
@@ -89,14 +121,18 @@ has(els.app.innerHTML, "data-today", "Idag-knappen finns");
 ok(!/undefined|NaN|\[object/.test(els.app.innerHTML), "ingen undefined/NaN läcker ut i markup");
 
 /* ---------- Utfall: härledd status ur v32-cachen (0.6.0) ---------- */
-has(els.diag.innerHTML, "lästa ur v32-cachen", "aktivitetsraden i paritetskortet");
-has(els.diag.innerHTML, "read-only", "raden intygar att cachen aldrig skrivs");
+clickBtn({ nav: "installningar" });
+has(els.app.innerHTML, "lästa ur v32-cachen", "aktivitetsraden i paritetskortet");
+has(els.app.innerHTML, "read-only", "raden intygar att cachen aldrig skrivs");
+clickBtn({ nav: "plan" });
 has(els.app.innerHTML, "✓ utfört", "exakt match ⇒ passet märks utfört utan handpåläggning");
 { const so = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-run-thr"];
   ok(so?.match?.activityId === 901, "auto-länken är sparad i overlayn");
   ok(so.events.some(e => e.rule === "match-auto"), "P3: tyst länk redovisas i händelseloggen"); }
 has(els.app.innerHTML, "Att bekräfta", "mittzonskandidaten blir en fråga, aldrig ett tyst facit");
-has(els.app.innerHTML, "Utanför plan", "främmande aktivitet listas utanför plan");
+clickBtn({ nav: "logg" });
+has(els.app.innerHTML, "Utanför plan", "främmande aktivitet listas utanför plan — i Loggen");
+clickBtn({ nav: "plan" });
 { fire("click", { target: target({ nolink: "sk-w42-bike-long|902" }, ["data-nolink"]) });
   const so = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-bike-long"];
   ok(so?.matchDrop?.includes(902), "Nej sparas — paret föreslås aldrig igen");
@@ -183,11 +219,11 @@ has(els.app.innerHTML, "struket", "struket pass märks i vyn");
 tapCard("sk-w42-swim-css"); clickBtn({ act: "restore" });
 ok(!JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-swim-css"].status, "strykningen går att häva");
 
-/* ---------- Säkerhetskopia (0.6.1) ---------- */
-has(els.app.innerHTML, "Ladda ned fil", "backupen kan laddas ned som fil (0.6.2)");
+/* ---------- Säkerhetskopia (0.6.1 → bor i Inställningar 0.7.0) ---------- */
+clickBtn({ nav: "installningar" });
+has(els.app.innerHTML, "Ladda ned fil", "backupen kan laddas ned som fil");
 has(els.app.innerHTML, "Kopiera till urklipp", "urklippsvägen finns kvar som alternativ");
-has(els.diag.innerHTML, "haptik", "paritetskortet redovisar haptikläget");
-has(els.diag.innerHTML, "data-buzztest", "testknapp för vibration finns");
+has(els.app.innerHTML, "haptik", "pariteten redovisar haptikläget");
 fire("click", { target: target({ backup: "" }, ["data-backup"]) });
 await new Promise(r => setTimeout(r, 10));
 ok(clipped && JSON.parse(clipped).kind === "trizone-next-backup", "kopian hamnar i urklipp");

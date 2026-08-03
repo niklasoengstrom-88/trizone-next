@@ -1,4 +1,4 @@
-/* TRIZONE Next — styles.css · BUILD next-0.6.3 · 2026-08-03
+/* TRIZONE Next — styles.css · BUILD next-0.7.0 · 2026-08-03
    Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
 :root{
   --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
@@ -181,3 +181,35 @@ button:focus-visible,.sess:focus-visible{outline:2px solid var(--accent);outline
 .tblock{margin-top:14px}
 .tblock .serif{margin-top:5px}
 .placenote{margin-top:14px;padding-top:10px;border-top:1px solid var(--line-soft)}
+
+/* 0.7.0: skalet — flikar, vyer, inställningar, logg */
+main{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;justify-content:center;gap:4px;
+  padding:8px 12px calc(8px + env(safe-area-inset-bottom));
+  background:rgba(10,10,13,.92);backdrop-filter:blur(12px);border-top:1px solid var(--line)}
+.tab{min-height:44px;padding:0 18px;border:0;border-radius:12px;background:none;
+  color:var(--faint);font:600 12.5px/1 var(--sans);letter-spacing:.04em;cursor:pointer}
+.tab.active{color:var(--ink);background:var(--surface-hi)}
+.fab{bottom:calc(74px + env(safe-area-inset-bottom))}
+.viewhead{display:flex;align-items:baseline;gap:12px;margin:4px 0 14px}
+.viewhead h1{font-size:27px}
+.viewhead .wm{font-size:11px}
+.setsec{margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)}
+.setsec:first-of-type{border-top:0;padding-top:0}
+.schedrow{display:flex;align-items:center;gap:6px;padding:5px 0}
+.schedrow .dname{min-width:44px}
+.schedchip{min-height:40px;padding:0 13px;border-radius:10px;border:1px solid var(--line);
+  background:none;color:var(--faint);font:600 11px/1 var(--sans);letter-spacing:.08em;
+  text-transform:uppercase;cursor:pointer}
+.schedchip.on{color:var(--ink);border-color:var(--faint);background:var(--surface-hi)}
+.hint.bad{color:var(--warn)}
+.orow{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line-soft)}
+.orow:first-of-type{border-top:0}
+.otext{flex:1;min-width:0;font-size:12.5px;display:flex;flex-direction:column;gap:1px}
+.evlog{margin-top:16px}
+.evrow{padding:8px 0;border-top:1px solid var(--line-soft);font-size:12.5px}
+.evrow:first-of-type{border-top:0}
+.evtop{display:flex;justify-content:space-between;gap:10px}
+.evrule{font-weight:600;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut)}
+.evsess{font-family:var(--serif-display);font-style:italic;margin-top:2px}
+.evwhy{color:var(--mut);margin-top:2px;font-family:var(--serif-text)}

@@ -28,7 +28,7 @@ eq(matchDate("2026-10-15T00:40:00"), "2026-10-14", "fixtur 13: midnattspass räk
 eq(matchDate("2026-10-14T19:00:00"), "2026-10-14", "matchDate: normal kväll orörd");
 
 /* ---------- validatePlan (planformat §8) ---------- */
-const plan = JSON.parse(readFileSync("plan.json","utf8"));
+const plan = JSON.parse(readFileSync("plan_ref.json","utf8"));   /* testfixturen — plan.json är alltid den skarpa planen (0.7.0) */
 ok(validatePlan(plan).ok, "referensplanen validerar");
 const broken = JSON.parse(readFileSync("plan_broken.json","utf8"));
 const vb = validatePlan(broken);
@@ -839,6 +839,41 @@ import { backupExport, backupImport } from "./core.js";
   ok(!r.ok && r.error.includes("holmsjo.cache (legacy)"),
      "kvotmeddelandet pekar ut legacy-nyckeln som äter platsen — inte längre osynlig"); }
 
+
+/* ================================================================
+   0.7.0 — BINDNINGAR (D7): cfg-nyckel, validering, backup bär cfg
+   ================================================================ */
+import { DEFAULT_CFG, validateCfg } from "./core.js";
+
+{ const st = makeStore(fakeStorage(1e6));
+  const l0 = st.loadCfg();
+  eq(l0.cfg.schedule[1], ["Lunch","Kväll"], "utan sparad cfg gäller default-livsschemat");
+  ok(!l0.stored && !l0.error, "saknad cfg är inget fel — den är bara inte satt");
+  const mine = { schedule: { ...DEFAULT_CFG.schedule, 2: ["Morgon","Kväll"] } };
+  ok(st.saveCfg(mine).ok, "giltig cfg sparas");
+  const l1 = st.loadCfg();
+  eq(l1.cfg.schedule[2], ["Morgon","Kväll"], "cfg-rundtur: livsschemat överlever omladdning");
+  ok(l1.stored, "sparad cfg redovisas som lagrad"); }
+{ const st = makeStore(fakeStorage(1e6));
+  ok(!st.saveCfg({ schedule: { 2: ["Natt"] } }).ok, "okänt fönster avvisas — cfg skrivs aldrig trasig");
+  ok(!st.saveCfg({ schedule: { 9: ["Kväll"] } }).ok, "dag utanför 0–6 avvisas");
+  ok(!validateCfg("sträng").ok, "cfg som inte är objekt avvisas"); }
+{ const st = makeStore(fakeStorage(1e6, { "trizone.next.cfg.v1": "{ trasig" }));
+  const l = st.loadCfg();
+  eq(l.cfg.schedule[0], ["Kväll"], "trasig cfg blockerar aldrig — default gäller");
+  ok(l.error?.includes("går inte att läsa"), "…men felet redovisas, tystas inte"); }
+
+/* ---------- Backup bär bindningarna (D7) ---------- */
+{ const cfg = { schedule: { ...DEFAULT_CFG.schedule, 5: ["Morgon"] } };
+  const b = backupExport(emptyOverlay("v"), "v", NOW, cfg);
+  const r = backupImport(JSON.stringify(b), plan, NOW);
+  eq(r.errors, [], "backup med cfg importeras felfritt");
+  eq(r.cfg.schedule[5], ["Morgon"], "livsschemat följer med kopian mellan enheter");
+  const r0 = backupImport(JSON.stringify(backupExport(emptyOverlay("v"), "v", NOW)), plan, NOW);
+  eq([r0.errors.length, r0.cfg], [0, null], "äldre kopia utan cfg accepteras — cfg är valfri");
+  const bad = backupExport(emptyOverlay("v"), "v", NOW, { schedule: { 3: ["Natt"] } });
+  ok(backupImport(JSON.stringify(bad), plan, NOW).errors[0].includes("cfg"),
+     "trasig cfg i kopian avvisas med rotorsak"); }
 
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester

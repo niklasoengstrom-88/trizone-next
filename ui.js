@@ -3,19 +3,16 @@
    Byggstämpelparitet över ALLA fem filer: core, ui, index (meta), sw (aktiv cache), plan. */
 "use strict";
 import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
-         manualAdjust, shortDate, DAYLABEL,
+         manualAdjust, shortDate, DAYLABEL, WINDOWS, DEFAULT_CFG, resolveOrphan,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
          actZoneMinutes, matchDate, backupExport, backupImport } from "./core.js";
 
-export const UI_BUILD = "next-0.6.3 · 2026-08-03";
-
-/* Livsschema: profildata (D7). Framhäver träningsdagar — spärrar aldrig placering. */
-const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
-                               4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] } };
+export const UI_BUILD = "next-0.7.0 · 2026-08-03";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
-            acts:[], mq:[], unplanned:[], importOpen:false };
+            acts:[], mq:[], unplanned:[], importOpen:false,
+            view:"plan", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[] };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
     rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
@@ -82,10 +79,30 @@ function sessionCard(s) {
   </div>`;
 }
 
-/* ---------- Löpande veckolista (beslut B) ---------- */
+/* ---------- Vyväxling (0.7.0): Plan · Logg · Inställningar ---------- */
+const NAV = [["plan", "Plan"], ["logg", "Logg"], ["installningar", "Inställningar"]];
 function render() {
-  const weeks = planWeeks(S.plan);
   const h = [];
+  if (S.view === "plan") renderPlan(h);
+  else if (S.view === "logg") renderLogg(h);
+  else renderSettings(h);
+  h.push(`<nav class="tabs" aria-label="Huvudnavigering">` + NAV.map(([id, label]) =>
+    `<button class="tab${S.view === id ? " active" : ""}" data-nav="${id}"
+       aria-current="${S.view === id ? "page" : "false"}">${label}</button>`).join("") + `</nav>`);
+  if (S.sel) { const s = findSess(S.sel); if (s) h.push(sheet(s)); }
+  if (S.note) h.push(`<div class="toast${S.note.bad ? " bad" : ""}">${esc(S.note.text)}</div>`);
+  app().innerHTML = h.join("");
+  document.getElementById("impfile")?.addEventListener("change", async (ev) => {
+    const f = ev.target.files?.[0];
+    if (!f) return;
+    try { importRaw(await f.text()); }
+    catch (e) { S.note = { text: "Filen gick inte att läsa: " + e.message, bad: true }; render(); }
+  });
+}
+
+/* ---------- Plan: löpande veckolista (beslut B) ---------- */
+function renderPlan(h) {
+  const weeks = planWeeks(S.plan);
 
   if (S.mq.length) {
     h.push(`<section class="confirm"><div class="eyebrow">Att bekräfta · ${S.mq.length}</div>`);
@@ -128,7 +145,7 @@ function render() {
       </header>`);
 
     for (const d of v.days) {
-      const trainday = (BINDINGS.schedule[d.day] ?? []).length > 0;
+      const trainday = (S.cfg.schedule[d.day] ?? []).length > 0;
       h.push(`<section class="day${d.date === today() ? " today" : ""}${d.sessions.length ? "" : " empty"}${trainday ? "" : " off"}"
           data-day="${wk}|${d.day}">
         <div class="dhead"><span class="dname">${d.label}</span><span class="ddate">${shortDate(d.date)}</span>
@@ -145,8 +162,16 @@ function render() {
     h.push(`</section>`);
   }
 
+  h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
+}
+
+/* ---------- Logg: händelser + utanför plan ---------- */
+function renderLogg(h) {
+  h.push(`<header class="viewhead"><h1>Logg</h1></header>`);
+
   if (S.unplanned.length) {
-    h.push(`<section class="menu offplan"><div class="eyebrow">Utanför plan · ${S.unplanned.length}</div>`);
+    h.push(`<section class="menu offplan"><div class="eyebrow">Utanför plan · ${S.unplanned.length}</div>
+      <p class="hint">Aktiviteter utan pass i planen. Räknas, men jagas inte.</p>`);
     for (const id of S.unplanned) {
       const a = actById(id); if (!a) continue;
       h.push(`<div class="oprow"><span class="dim">${esc(matchDate(a.start_date_local) ?? "")}</span>
@@ -154,27 +179,72 @@ function render() {
     }
     h.push(`</section>`);
   }
-  h.push(`<section class="backup"><div class="eyebrow">Säkerhetskopia</div>
+
+  const evs = [];
+  for (const [id, so] of Object.entries(S.overlay?.sessions ?? {}))
+    for (const e of so.events ?? []) evs.push({ ...e, session: e.session ?? id });
+  for (const e of S.overlay?.modes?.log ?? []) evs.push(e);
+  evs.sort((a, b) => String(b.t).localeCompare(String(a.t)));
+  h.push(`<section class="evlog"><div class="eyebrow">Händelser · ${evs.length}</div>
+    <p class="hint">Varje ingrepp — motorns, matchningens och ditt eget — lämnar en läsbar post. Inget skrivs om.</p>`);
+  if (!evs.length) h.push(`<p class="hint">Inga händelser ännu.</p>`);
+  for (const e of evs.slice(0, 120)) {
+    const s = e.session ? findSess(e.session) : null;
+    h.push(`<div class="evrow">
+      <div class="evtop"><span class="evrule">${esc(e.rule)}</span>
+        <span class="dim">${esc(String(e.t).slice(0, 10))}</span></div>
+      ${s ? `<div class="evsess">${esc(s.title ?? e.session)}</div>` : e.session ? `<div class="evsess dim">${esc(e.session)}</div>` : ""}
+      <div class="evwhy">${esc(e.why ?? e.action ?? "")}</div>
+    </div>`);
+  }
+  h.push(`</section>`);
+}
+
+/* ---------- Inställningar: bindningar, paritet, backup, föräldralösa (T2, D7) ---------- */
+function renderSettings(h) {
+  h.push(`<header class="viewhead"><span class="wm">TRIZONE</span><h1>Inställningar</h1></header>`);
+
+  h.push(`<section class="setsec"><div class="eyebrow">Livsschema</div>
+    <p class="hint">Dagar och fönster du brukar träna. Framhäver i vyn och styr motorns flyttförslag — spärrar aldrig en placering.</p>`);
+  for (let d = 0; d < 7; d++) {
+    const wins = S.cfg.schedule[d] ?? [];
+    h.push(`<div class="schedrow"><span class="dname">${DAYLABEL[d]}</span>` +
+      WINDOWS.map(w => `<button class="schedchip${wins.includes(w) ? " on" : ""}"
+        data-sched="${d}|${w}" aria-pressed="${wins.includes(w)}">${w}</button>`).join("") + `</div>`);
+  }
+  if (S.cfgError) h.push(`<p class="hint bad">${esc(S.cfgError)}</p>`);
+  h.push(`</section>`);
+
+  const orphans = S.overlay?.orphans ?? [];
+  if (orphans.length) {
+    h.push(`<section class="setsec"><div class="eyebrow">Föräldralösa överlagringar · ${orphans.length}</div>
+      <p class="hint">Anteckningar vars pass försvann vid planbyte. Inget raderas utan ditt beslut.</p>`);
+    for (const o of orphans) {
+      const what = [o.data?.status, o.data?.moved ? "flyttad" : null, o.data?.adjust ? "justerad" : null,
+                    o.placed ? "placerad" : null].filter(Boolean).join(" · ") || "överlagring";
+      h.push(`<div class="orow"><div class="otext"><b>${esc(o.id)}</b>
+          <span class="dim">${esc(what)} · plan ${esc(o.fromVersion ?? "?")}</span></div>
+        <div class="qacts"><button data-orphan="${esc(o.id)}|archive">Arkivera</button>
+        <button class="ghostbtn" data-orphan="${esc(o.id)}|delete">Radera</button></div></div>`);
+    }
+    h.push(`</section>`);
+  }
+
+  h.push(`<section class="setsec backup"><div class="eyebrow">Säkerhetskopia</div>
     <div class="acts"><button data-download>Ladda ned fil</button>
     <button class="ghostbtn" data-backup>Kopiera till urklipp</button>
     <button class="ghostbtn" data-import>Importera…</button></div>
-    <p class="hint">Filen innehåller alla placeringar, strykningar och länkar. Importen tar både fil och urklippstext.</p>
+    <p class="hint">Kopian bär placeringar, strykningar, länkar och livsschemat. Importen tar både fil och urklippstext.</p>
     ${S.importOpen ? `<textarea id="impbox" class="impbox" rows="4"
         placeholder="Klistra in säkerhetskopian här"></textarea>
       <div class="acts"><button data-import-go>Importera kopian</button>
       <label class="filelbl">Välj fil…<input type="file" id="impfile" accept=".json,application/json" style="display:none"></label></div>` : ""}
   </section>`);
-  h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
-  if (S.sel) { const s = findSess(S.sel); if (s) h.push(sheet(s)); }
-  if (S.note) h.push(`<div class="toast${S.note.bad ? " bad" : ""}">${esc(S.note.text)}</div>`);
 
-  app().innerHTML = h.join("");
-  document.getElementById("impfile")?.addEventListener("change", async (ev) => {
-    const f = ev.target.files?.[0];
-    if (!f) return;
-    try { importRaw(await f.text()); }
-    catch (e) { S.note = { text: "Filen gick inte att läsa: " + e.message, bad: true }; render(); }
-  });
+  h.push(`<section class="setsec"><div class="eyebrow">Bygge</div>
+    <div class="kv">${S.parity.map(r => `<span class="k">${esc(r.k)}</span><span class="v ${r.cls}">${esc(r.val)}</span>`).join("")}</div>
+    <div class="acts" style="margin-top:10px"><button class="ghostbtn" data-buzztest>Testa vibration</button></div>
+  </section>`);
 }
 
 function outcome(s) {
@@ -379,12 +449,36 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-sched],[data-orphan],[data-buzztest]");
     if (!t) return;
     S.note = null;
+    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; render(); return; }
+    if (t.dataset.sched) {
+      const [d, w] = t.dataset.sched.split("|");
+      const wins = new Set(S.cfg.schedule[d] ?? []);
+      wins.has(w) ? wins.delete(w) : wins.add(w);
+      S.cfg.schedule[d] = WINDOWS.filter(x => wins.has(x));
+      const r = S.store.saveCfg(S.cfg);
+      if (!r.ok) S.note = { text: r.error, bad: true };
+      render(); return;
+    }
+    if (t.dataset.orphan) {
+      const [id, decision] = t.dataset.orphan.split("|");
+      S.overlay = resolveOrphan(S.overlay, id, decision, now());
+      const w = S.store.saveOverlay(S.overlay);
+      S.note = w.ok ? { text: decision === "archive" ? "Arkiverad." : "Raderad — beslutet är loggat." }
+                    : { text: w.error, bad: true };
+      render(); return;
+    }
+    if (t.dataset.buzztest != null) {
+      const r = buzz([120, 60, 120]);
+      S.note = { text: `Vibration: ${hapticRow()}${r === false ? " — webbläsaren NEKADE anropet" : ""}`,
+                 bad: r === false || !hapticLog.api };
+      render(); return;
+    }
     if (t.dataset.download != null) {
       try {
-        const json = JSON.stringify(backupExport(S.overlay, S.plan.planVersion, now()), null, 2);
+        const json = JSON.stringify(backupExport(S.overlay, S.plan.planVersion, now(), S.cfg), null, 2);
         const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
         const a = document.createElement("a");
         a.href = url; a.download = `trizone-next-backup-${now().slice(0, 10)}.json`;
@@ -395,7 +489,7 @@ function wire() {
       render(); return;
     }
     if (t.dataset.backup != null) {
-      const json = JSON.stringify(backupExport(S.overlay, S.plan.planVersion, now()));
+      const json = JSON.stringify(backupExport(S.overlay, S.plan.planVersion, now(), S.cfg));
       (navigator.clipboard?.writeText(json) ?? Promise.reject())
         .then(() => { S.note = { text: `Säkerhetskopia i urklipp (${(json.length/1024).toFixed(1)} kB). Spara den någonstans varaktigt.` }; render(); })
         .catch(() => { S.note = { text: "Urklipp nekades — kopian kunde inte kopieras.", bad: true }; render(); });
@@ -407,6 +501,7 @@ function wire() {
       const r = backupImport(raw, S.plan, now());
       if (r.errors.length) { S.note = { text: "Import avvisad: " + r.errors[0], bad: true }; render(); return; }
       S.overlay = r.overlay;
+      if (r.cfg) { S.cfg = { ...structuredClone(DEFAULT_CFG), ...r.cfg }; S.store.saveCfg(S.cfg); }
       S.store.unblock();                                   /* giltig kopia häver S2-spärren */
       const w = S.store.saveOverlay(S.overlay, { force: true });
       S.note = w.ok
@@ -455,6 +550,7 @@ function importRaw(raw) {
   const r = backupImport(raw, S.plan, now());
   if (r.errors.length) { S.note = { text: "Import avvisad: " + r.errors[0], bad: true }; render(); return; }
   S.overlay = r.overlay;
+  if (r.cfg) { S.cfg = { ...structuredClone(DEFAULT_CFG), ...r.cfg }; S.store.saveCfg(S.cfg); }
   S.store.unblock();
   const w = S.store.saveOverlay(S.overlay, { force: true });
   S.note = w.ok
@@ -468,8 +564,7 @@ function importRaw(raw) {
 /* ---------- Start ---------- */
 async function boot() {
   const stamp = UI_BUILD.split(" ")[0];
-  const diag = [];
-  const row = (k, val, cls="") => diag.push(`<span class="k">${k}</span><span class="v ${cls}">${val}</span>`);
+  const row = (k, val, cls="") => S.parity.push({ k, val, cls });
 
   row("core.js", CORE_BUILD, CORE_BUILD === UI_BUILD ? "ok" : "bad");
   row("ui.js", UI_BUILD, CORE_BUILD === UI_BUILD ? "ok" : "bad");
@@ -491,6 +586,7 @@ async function boot() {
   row("sw-cache", swTxt, swCls);
 
   S.store = makeStore(window.localStorage);
+  { const c = S.store.loadCfg(); S.cfg = c.cfg; S.cfgError = c.error; }
   try {
     const res = await fetch("./plan.json", { cache: "no-cache" });
     const p = await res.json();
@@ -527,17 +623,7 @@ async function boot() {
   }
 
   row("haptik", hapticRow(), hapticLog.api ? "" : "bad");
-  const diagEl = document.getElementById("diag");
-  diagEl.innerHTML = `<div class="kv">${diag.join("")}</div>
-    <div class="acts" style="margin-top:10px"><button class="ghostbtn" data-buzztest>Testa vibration</button></div>`;
-  diagEl.addEventListener("click", (ev) => {
-    if (!ev.target?.closest?.("[data-buzztest]")) return;
-    const r = buzz([120, 60, 120]);
-    S.note = { text: `Vibration: ${hapticRow()}${r === false ? " — webbläsaren NEKADE anropet" : ""}`,
-               bad: r === false || !hapticLog.api };
-    render();
-  });
-  if (!S.plan) { app().innerHTML = `<p class="sub">Ingen giltig plan — veckan renderas inte. Se paritetskortet.</p>`; return; }
+  if (!S.plan) { S.view = "installningar"; render(); return; }   /* felläget landar där pariteten bor */
   wire();
   render();
   document.getElementById("wk-" + S.week)?.scrollIntoView();

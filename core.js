@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.6.3 · 2026-08-03";
+export const BUILD = "next-0.7.0 · 2026-08-03";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -643,7 +643,28 @@ export function deactivateMode(overlay, key, now = "") {
    Nycklar beslutade i planformat §7 — inga nya nycklar tillkommer.
    ================================================================ */
 
-export const KEYS = { plan: "trizone.plan.v1", overlay: "trizone.overlay.v1" };
+export const KEYS = { plan: "trizone.plan.v1", overlay: "trizone.overlay.v1",
+                      cfg: "trizone.next.cfg.v1" };   /* cfg: beslut 0.7.0 — bindningar (D7) */
+
+/* Livsschemats default — profildata, överstyrs i Inställningar (D7).
+   Schemat FRAMHÄVER träningsdagar och matar missed-A — det spärrar aldrig. */
+export const DEFAULT_CFG = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
+                                         4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] } };
+
+export function validateCfg(cfg) {
+  const errors = [];
+  if (!cfg || typeof cfg !== "object") return { ok: false, errors: [{ where: "cfg", why: "inte ett objekt" }] };
+  if (cfg.schedule !== undefined) {
+    if (typeof cfg.schedule !== "object" || cfg.schedule === null)
+      errors.push({ where: "cfg.schedule", why: "inte ett objekt" });
+    else for (const [d, wins] of Object.entries(cfg.schedule)) {
+      if (!(Number(d) >= 0 && Number(d) <= 6)) errors.push({ where: `schedule.${d}`, why: "dag utanför 0–6" });
+      if (!Array.isArray(wins) || wins.some(w => !WINDOWS.includes(w)))
+        errors.push({ where: `schedule.${d}`, why: `okänt fönster (väntat ${WINDOWS.join(" | ")})` });
+    }
+  }
+  return { ok: !errors.length, errors };
+}
 
 export const byteSize = s => new TextEncoder().encode(String(s ?? "")).length;
 const kB = n => (n / 1024).toFixed(n < 10240 ? 1 : 0) + " kB";
@@ -779,6 +800,24 @@ export function makeStore(storage) {
 
     savePlan: (plan) => write(KEYS.plan, trimPlan(plan)),
     loadPlan: () => { const r = readJson(KEYS.plan); return r.value ?? null; },
+
+    /* Bindningar (D7): trasig cfg blockerar aldrig appen — default gäller, felet redovisas */
+    loadCfg() {
+      const r = readJson(KEYS.cfg);
+      if (r.missing) return { cfg: structuredClone(DEFAULT_CFG), error: null, stored: false };
+      if (r.error) return { cfg: structuredClone(DEFAULT_CFG), error: r.error, stored: false };
+      const v = validateCfg(r.value);
+      if (!v.ok) return { cfg: structuredClone(DEFAULT_CFG),
+        error: "cfg ogiltig (" + v.errors.map(e => `${e.where}: ${e.why}`).join(" · ") + ") — default gäller",
+        stored: false };
+      return { cfg: { ...structuredClone(DEFAULT_CFG), ...r.value }, error: null, stored: true };
+    },
+    saveCfg(cfg) {
+      const v = validateCfg(cfg);
+      if (!v.ok) return { ok: false, error: "cfg avvisad: " +
+        v.errors.map(e => `${e.where}: ${e.why}`).join(" · ") };
+      return write(KEYS.cfg, cfg);
+    },
 
     loadOverlay(plan) {
       const r = readJson(KEYS.overlay);
@@ -1162,10 +1201,12 @@ export function dismissMatch(overlay, sessionId, activityId, now = "") {
    förklaras, importeras aldrig. Import är även räddningsvägen ur
    en spärrad overlay (S2).
    ================================================================ */
-export function backupExport(overlay, planVersion, now = "") {
-  return { kind: "trizone-next-backup", formatVersion: FORMAT_VERSION,
-           exported: now, planVersion: planVersion ?? overlay?.planVersion ?? null,
-           overlay: structuredClone(overlay ?? emptyOverlay()) };
+export function backupExport(overlay, planVersion, now = "", cfg = null) {
+  const b = { kind: "trizone-next-backup", formatVersion: FORMAT_VERSION,
+              exported: now, planVersion: planVersion ?? overlay?.planVersion ?? null,
+              overlay: structuredClone(overlay ?? emptyOverlay()) };
+  if (cfg) b.cfg = structuredClone(cfg);        /* bindningar följer med (D7) */
+  return b;
 }
 
 export function backupImport(raw, plan, now = "") {
@@ -1178,7 +1219,13 @@ export function backupImport(raw, plan, now = "") {
     return { errors: [`okänd formatversion: ${b.formatVersion} (stödd: ${FORMAT_VERSION})`] };
   const v = validateOverlay(b.overlay);
   if (!v.ok) return { errors: v.errors.map(e => `${e.where}: ${e.why}`) };
+  let cfg = null;
+  if (b.cfg !== undefined) {
+    const cv = validateCfg(b.cfg);
+    if (!cv.ok) return { errors: cv.errors.map(e => `cfg · ${e.where}: ${e.why}`) };
+    cfg = b.cfg;
+  }
   const rec = reconcileOverlay(b.overlay, plan, now);          /* föräldralösa listas, raderas aldrig */
   return { overlay: rec.overlay, orphans: rec.orphans, errors: [],
-           exported: b.exported, planVersion: b.planVersion };
+           exported: b.exported, planVersion: b.planVersion, cfg };
 }
