@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.6.2 · 2026-08-02
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.6.3 · 2026-08-03
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -40,7 +40,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.6.2 · 2026-08-02" }),
+  querySelector: () => ({ content: "next-0.6.3 · 2026-08-03" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -76,7 +76,7 @@ const tapCard = (id, wk = 42) => { const t = target({ sess: id }, ["data-sess"],
 const clickBtn = dataset => fire("click", { target: target(dataset, Object.keys(dataset).map(k => "data-" + k)) });
 
 /* ---------- Löpande listan ---------- */
-has(els.diag.innerHTML, "next-0.6.2", "paritetskortet renderas");
+has(els.diag.innerHTML, "next-0.6.3", "paritetskortet renderas");
 has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
 has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
 has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
@@ -104,6 +104,8 @@ has(els.app.innerHTML, "Utanför plan", "främmande aktivitet listas utanför pl
 { const t = target({ sess: "sk-w42-run-thr" }, ["data-sess"], 42);
   fire("pointerdown", { button: 0, target: t, clientX: 5, clientY: 5, pointerType: "touch", pointerId: 5 });
   fire("pointerup", { target: t, t: Date.now() });
+  has(els.app.innerHTML, "Genomförande", "panelen bär exec-texten — hur passet ska köras");
+  has(els.app.innerHTML, "Mot målet", "panelen bär goal-texten");
   has(els.app.innerHTML, ">Plan<", "panelen visar plansidan av dubbelremsan");
   has(els.app.innerHTML, "Utfört · 52 min", "panelen visar utfallsraden med duration och distans");
   await new Promise(r => setTimeout(r, 500));

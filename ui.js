@@ -8,7 +8,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
          actZoneMinutes, matchDate, backupExport, backupImport } from "./core.js";
 
-export const UI_BUILD = "next-0.6.2 · 2026-08-02";
+export const UI_BUILD = "next-0.6.3 · 2026-08-03";
 
 /* Livsschema: profildata (D7). Framhäver träningsdagar — spärrar aldrig placering. */
 const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
@@ -202,8 +202,13 @@ function sheet(s) {
     <div class="eyebrow">${SPORTLABEL[s.sport] ?? esc(s.sport)} · ${s.durationMin} min · prio ${esc(s.prio)}${s.slot ? " · " + esc(s.slot) : ""}</div>
     <h2>${esc(s.title ?? s.id)}</h2>
     ${s.text?.brief ? `<p class="serif">${esc(s.text.brief)}</p>` : ""}
-    ${s.text?.place ? `<p class="hint">${esc(s.text.place)}</p>` : ""}
+    ${zstrip(s.profile)}
+    ${s.text?.exec ? `<div class="tblock"><div class="eyebrow">Genomförande</div>
+      <p class="serif">${esc(s.text.exec)}</p></div>` : ""}
+    ${s.text?.goal ? `<div class="tblock"><div class="eyebrow">Mot målet</div>
+      <p class="serif">${esc(s.text.goal)}</p></div>` : ""}
     ${outcome(s)}
+    ${s.text?.place ? `<p class="hint placenote">${esc(s.text.place)}</p>` : ""}
     <div class="acts">
       <button data-act="move">${placed ? "Flytta" : "Placera"}</button>
       ${placed ? `<button data-act="unplace">Till menyn</button>` : ""}

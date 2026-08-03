@@ -1,4 +1,4 @@
-/* TRIZONE Next — styles.css · BUILD next-0.6.2 · 2026-08-02
+/* TRIZONE Next — styles.css · BUILD next-0.6.3 · 2026-08-03
    Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
 :root{
   --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
@@ -174,3 +174,10 @@ button:focus-visible,.sess:focus-visible{outline:2px solid var(--accent);outline
 .backup .acts{margin-top:8px}
 .impbox{width:100%;margin-top:10px;background:var(--surface-lo);border:1px solid var(--line);
   border-radius:10px;color:var(--ink);font:12px/1.5 var(--sans);padding:10px;resize:vertical}
+
+/* Passdetaljens fulla text (0.6.3) */
+.sheet{max-height:82vh;overflow-y:auto;overscroll-behavior:contain}
+.sheet > .zstrip{margin-top:12px;height:9px}
+.tblock{margin-top:14px}
+.tblock .serif{margin-top:5px}
+.placenote{margin-top:14px;padding-top:10px;border-top:1px solid var(--line-soft)}
