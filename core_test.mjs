@@ -955,6 +955,81 @@ import { zoneParity, ZONE_COUNT } from "./core.js";
   ok(r.why.includes("intervals.icu"), "varningen pekar på var felet rättas");
   eq(r.mismatches.map(m => m.id), [2], "avvikarna pekas ut individuellt"); }
 
+/* ================================================================
+   0.9.0 — PROFILEN ÄGER UPPSÄTTNINGEN (P2), ATLETVAKT (D-M2)
+   ================================================================ */
+import { ENGINE_FIELDS, athleteGuard, activateMode, LIFE_MODES } from "./core.js";
+
+/* ---------- Motorvärden är data, inte kod ---------- */
+{ const st = makeStore(fakeStorage(1e6));
+  ok(st.saveCfg({ engine: { lowShareTarget: 0.70, volumeCapPct: 130 } }).ok,
+     "egna motorvärden sparas — 80/20 är en default, inte en sanning");
+  eq(st.loadCfg().cfg.engine.lowShareTarget, 0.70, "värdet överlever omladdning");
+  ok(!st.saveCfg({ engine: { lowShareTarget: 0.20 } }).ok, "orimligt lågt mål avvisas");
+  ok(!st.saveCfg({ engine: { hittepå: 5 } }).ok, "okänt motorvärde avvisas — vitlista, inte fritt");
+  ok(!st.saveCfg({ engine: { comebackCount: 99 } }).ok, "värde utanför gräns avvisas");
+  ok(ENGINE_FIELDS.lowShareTarget.min === 50, "gränserna är deklarerade, inte gömda"); }
+
+/* ---------- Meddelandet ljuger aldrig om sin egen tröskel (0.9.0-defekten) ---------- */
+{ const flags = [{ id: "polarization", week: 42 }, { id: "duration-drift", week: 42 }];
+  const std = applyRules(plan, {}, {}, flags, NOW);
+  ok(std.actions.some(a => a.rule === "polarization" && a.why.includes("78 %")),
+     "default: texten säger 78 %");
+  const mine = applyRules(plan, {}, { engine: { lowShareTarget: 0.70, driftPct: 140 } }, flags, NOW);
+  ok(mine.actions.some(a => a.rule === "polarization" && a.why.includes("70 %")),
+     "egen tröskel ⇒ texten säger 70 % — inte längre inbakad siffra");
+  ok(mine.actions.some(a => a.why.includes("140 %")),
+     "samma sak för duration-drift — texten följer profilen");
+  ok(mine.actions.filter(a => a.level === 3 && a.why.includes("%")).length === 1,
+     "flaggmerge (§10): polarization × duration-drift blir EN post, båda siffrorna med"); }
+{ const q = applyRules(plan, {}, { engine: { volumeCapPct: 130 } },
+    [{ id: "volume-cap", sessionId: "sk-w42-run-thr", source: "derived" }], NOW);
+  ok(q.questions.some(x => x.ask.includes("130 %")), "frågan citerar profilens tak, inte kodens"); }
+
+/* ---------- Atletvakt ---------- */
+{ eq(athleteGuard(plan, { athlete: "niklas" }).ok, true, "rätt atlet ⇒ planen laddas");
+  const adopt = athleteGuard(plan, { athlete: null });
+  ok(adopt.ok && adopt.adopt === "niklas", "tom profil adopterar planens atlet vid första läsning");
+  const wrong = athleteGuard(plan, { athlete: "david" });
+  ok(!wrong.ok && wrong.why.includes("niklas") && wrong.why.includes("david"),
+     "fel atlet ⇒ planen laddas inte, och felet namnger båda");
+  eq(athleteGuard({ sessions: [] }, { athlete: "niklas" }).ok, true,
+     "plan utan atletfält ⇒ vakten vilar, bryter inte äldre planer"); }
+
+/* ---------- Livslägen: aktivering, ögonblicksbild, handen vinner ---------- */
+{ const a = activateMode({}, "mode-vacation", { from: "2026-10-12", to: "2026-10-18" }, NOW);
+  eq(a.key, "mode-vacation@2026-10-12", "lägesnyckeln är regel@startdatum");
+  ok(a.overlay.modes.active.length === 1, "läget är aktivt");
+  ok(a.overlay.modes.log.at(-1).why.includes("Semester"), "P3: aktiveringen loggas läsbart");
+  ok(activateMode(a.overlay, "mode-vacation", { from: "2026-10-12" }, NOW).error,
+     "samma läge aktiveras inte två gånger");
+  ok(activateMode({}, "hittepå", { from: "2026-10-12" }, NOW).error, "okänt läge avvisas");
+  ok(activateMode({}, "mode-vacation", {}, NOW).error, "läge utan startdatum avvisas");
+  eq(LIFE_MODES["illness-stop"].label, "Sjuk", "lägena har svenska etiketter"); }
+{ /* Full rundtur: aktivera → motorn stryker → avaktivera → exakt återställt */
+  const a = activateMode({}, "mode-vacation", { from: "2026-10-12", to: "2026-10-18" }, NOW);
+  const r = applyRules(plan, a.overlay, {}, [], NOW);
+  const after = applyActions(a.overlay, r.actions);
+  const struck = Object.entries(after.sessions).filter(([, v]) => v.status === "struck").map(([k]) => k);
+  ok(struck.length > 0, "semesterläget stryker B-pass");
+  ok(!after.sessions["sk-w42-str-core"] || after.sessions["sk-w42-str-core"].status !== "struck",
+     "skyddat pass överlever semesterläget (spec 1 §8)");
+  const off = deactivateMode(after, a.key, NOW);
+  ok(struck.every(id => off.sessions[id].status !== "struck"),
+     "avaktivering återställer exakt föregående tillstånd (P5)"); }
+
+/* ---------- Regression 0.9.0: öppet läge utan slutdatum ---------- */
+{ const a = activateMode({}, "mode-vacation", { from: "2026-10-12" }, NOW);   /* to saknas */
+  const r = applyRules(plan, a.overlay, {}, [], NOW);
+  ok(r.actions.some(x => x.rule === "mode-vacation"),
+     "läge utan slutdatum gäller tills det hävs — tystades tidigare helt (0.9.0-buggen)");
+  const bounded = activateMode({}, "mode-vacation", { from: "2026-10-12", to: "2026-10-18" }, NOW);
+  const rb = applyRules(plan, bounded.overlay, {}, [], NOW);
+  ok(rb.actions.some(x => x.rule === "mode-vacation"), "avgränsat spann fungerar oförändrat");
+  const later = activateMode({}, "mode-vacation", { from: "2027-01-01" }, NOW);
+  ok(!applyRules(plan, later.overlay, {}, [], NOW).actions.some(x => x.rule === "mode-vacation"),
+     "läge som börjar efter planen rör inga pass"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */

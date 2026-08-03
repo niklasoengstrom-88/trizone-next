@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.8.1 · 2026-08-03";
+export const BUILD = "next-0.9.0 · 2026-08-03";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -247,6 +247,9 @@ export const ENGINE = {
   shortenFloorMin: 20,    /* K2/K3: shorten går aldrig under 20 min            */
   protectedFloor: 0.5,    /* K3: kärndel för skyddade pass = 50 % av duration  */
   comebackCount: 2,       /* D5: profildefault, överstyrs i bindings           */
+  lowShareTarget: 0.78,   /* polariseringsgräns — profildata, inte sanning     */
+  volumeCapPct: 110,      /* löpvolymtak i % av 3-veckorssnitt (opt-in/gren)   */
+  driftPct: 125,          /* duration-drift: utfall över denna andel av plan   */
   slotHour: { Morgon: 7, Lunch: 12, "Kväll": 18 }  /* nominella klockslag för 24h-matte */
 };
 
@@ -300,11 +303,13 @@ function weekSpan(plan, weekNo) {                    /* → [måndag, söndag] e
   const end = new Date(d); end.setUTCDate(d.getUTCDate() + 6);
   return [d.toISOString().slice(0, 10), end.toISOString().slice(0, 10)];
 }
+const OPEN_END = "9999-12-31";                       /* läge utan slutdatum gäller tills det hävs */
 function sessionInSpan(plan, s, from, to) {          /* oplacerat pass: veckan överlappar spannet */
+  const hi = to ?? OPEN_END;                         /* 0.9.0-buggen: null tystade hela läget */
   const d = sessionDate(plan, s);
-  if (d) return d >= from && d <= to;
+  if (d) return d >= from && d <= hi;
   const ws = weekSpan(plan, s.week);
-  return !!ws && ws[0] <= to && ws[1] >= from;
+  return !!ws && ws[0] <= hi && ws[1] >= from;
 }
 function slotClock(plan, s) {                        /* nominell absoluttid i timmar, eller null */
   const d = sessionDate(plan, s);
@@ -506,7 +511,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     if (!s || s.status === "struck") continue;
     if (f.source === "derived") {
       questions.push({ rule: "volume-cap", sessions: [s.id],
-        ask: "Löpvolymen ligger över taket (110 % av 3-veckorssnittet). Korta veckans sista pass?" });
+        ask: `Löpvolymen ligger över taket (${cfg.volumeCapPct} % av 3-veckorssnittet). Korta veckans sista pass?` });
       continue;
     }
     push("volume-cap", 2, s.id, "warn",
@@ -538,11 +543,11 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* utfallsflaggor passerar som warn (beräknade uppströms) */
   for (const f of flags) {
     if (f.id === "polarization") lvl3.push({ rule: "polarization", level: 3, session: f.sessionId ?? null,
-      action: "warn", why: `Veckan under 78 % lågintensivt — överväg att sänka ett pass.`, payload: {}, orig: {}, t: now, week: f.week });
+      action: "warn", why: `Veckan under ${Math.round(cfg.lowShareTarget * 100)} % lågintensivt — överväg att sänka ett pass.`, payload: {}, orig: {}, t: now, week: f.week });
     if (f.id === "rpe-watch") lvl3.push({ rule: "rpe-watch", level: 3, session: f.sessionId ?? null,
       action: "warn", why: "RPE ≥ 9 loggat — nästa kvalitetspass granskas mot återhämtning.", payload: {}, orig: {}, t: now });
     if (f.id === "duration-drift") lvl3.push({ rule: "duration-drift", level: 3, session: f.sessionId ?? null,
-      action: "warn", why: "Utfall > 125 % av planerad duration — räknas mot veckovolymen.", payload: {}, orig: {}, t: now, week: f.week });
+      action: "warn", why: `Utfall > ${cfg.driftPct} % av planerad duration — räknas mot veckovolymen.`, payload: {}, orig: {}, t: now, week: f.week });
   }
   actions.push(...mergeEngineFlags(lvl3));
 
@@ -600,7 +605,7 @@ export function applyActions(overlay, actions) {
     }
     (so.events ??= []).push(ev);
     if (a.rule === "illness-stop" && a.comebackAfter && !ov.modes.comeback) {
-      ov.modes.comeback = { need: ENGINE.comebackCount, z2done: 0, passed: false, after: a.comebackAfter };
+      ov.modes.comeback = { need: a.comebackNeed ?? ENGINE.comebackCount, z2done: 0, passed: false, after: a.comebackAfter };
     }
   }
   return ov;
@@ -649,11 +654,35 @@ export const KEYS = { plan: "trizone.plan.v1", overlay: "trizone.overlay.v1",
 /* Livsschemats default — profildata, överstyrs i Inställningar (D7).
    Schemat FRAMHÄVER träningsdagar och matar missed-A — det spärrar aldrig. */
 export const DEFAULT_CFG = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
-                                         4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] } };
+                                         4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] },
+                             athlete: null,          /* null = ingen vakt; sätts vid första planläsning */
+                             engine: {} };           /* överstyr ENGINE-defaults (P2: uppsättningen är data) */
+
+/* Redigerbara motorvärden med gränser — allt annat i ENGINE är kodkonstant */
+export const ENGINE_FIELDS = {
+  lowShareTarget: { label: "Mål lågintensivt", unit: "%", min: 50, max: 95, pct: true },
+  volumeCapPct:   { label: "Löpvolymtak", unit: "% av 3-veckorssnitt", min: 100, max: 200 },
+  comebackCount:  { label: "Z2-pass före kvalitet efter sjukdom", unit: "pass", min: 1, max: 6 },
+  shortenFloorMin:{ label: "Kortaste pass vid nedkortning", unit: "min", min: 10, max: 45 },
+  maintFactor:    { label: "Underhållsdos i semesterläge", unit: "%", min: 30, max: 90, pct: true }
+};
 
 export function validateCfg(cfg) {
   const errors = [];
   if (!cfg || typeof cfg !== "object") return { ok: false, errors: [{ where: "cfg", why: "inte ett objekt" }] };
+  if (cfg.athlete !== undefined && cfg.athlete !== null && typeof cfg.athlete !== "string")
+    errors.push({ where: "cfg.athlete", why: "måste vara text eller null" });
+  if (cfg.engine !== undefined) {
+    if (typeof cfg.engine !== "object" || cfg.engine === null)
+      errors.push({ where: "cfg.engine", why: "inte ett objekt" });
+    else for (const [k, v] of Object.entries(cfg.engine)) {
+      const f = ENGINE_FIELDS[k];
+      if (!f) { errors.push({ where: `engine.${k}`, why: "okänt motorvärde" }); continue; }
+      const num = f.pct ? v * 100 : v;
+      if (typeof v !== "number" || !Number.isFinite(v) || num < f.min || num > f.max)
+        errors.push({ where: `engine.${k}`, why: `utanför ${f.min}–${f.max} ${f.unit}` });
+    }
+  }
   if (cfg.schedule !== undefined) {
     if (typeof cfg.schedule !== "object" || cfg.schedule === null)
       errors.push({ where: "cfg.schedule", why: "inte ett objekt" });
@@ -1347,4 +1376,40 @@ export function zoneParity(activities) {
   return { ok: false, checked: checked.length, mismatches: bad,
            why: `${bad.length} av ${checked.length} aktiviteter har ${shapes.join("/")} zoner, appen räknar med ${ZONE_COUNT}` +
                 ` — utfallsremsan kan vara felkalibrerad. Kontrollera zoninställningarna i intervals.icu.` };
+}
+
+
+/* ================================================================
+   ATLETVAKT (D-M2, 0.9.0) — fel plan ska aldrig laddas tyst
+   ================================================================ */
+export function athleteGuard(plan, cfg) {
+  const planAthlete = plan?.athlete ?? null;
+  const profile = cfg?.athlete ?? null;
+  if (!planAthlete) return { ok: true, why: "planen anger ingen atlet — vakten vilar" };
+  if (!profile) return { ok: true, adopt: planAthlete,
+                         why: `profilen kopplas till atlet "${planAthlete}"` };
+  if (profile === planAthlete) return { ok: true, why: `atlet "${profile}"` };
+  return { ok: false, why: `planen gäller "${planAthlete}" men profilen tillhör "${profile}"` +
+    ` — planen laddas inte. Byt atlet i Inställningar eller lägg rätt plan i repot.` };
+}
+
+/* Livslägen: aktivering med ögonblicksbild (spec 1 §9) */
+export const LIFE_MODES = {
+  "mode-vacation": { label: "Semester", why: "B-pass stryks, A-pass går till underhållsdos." },
+  "mode-reduced":  { label: "Reducerad vecka", why: "Veckan komprimeras till A-pass." },
+  "illness-stop":  { label: "Sjuk", why: "Allt i spannet stryks. Feber tränas aldrig igenom." },
+  "tissue-freeze": { label: "Känning", why: "Berörd gren ersätts tills läget hävs." }
+};
+
+export function activateMode(overlay, rule, { from, to = null } = {}, now = "") {
+  if (!LIFE_MODES[rule]) return { error: `okänt läge: ${rule}` };
+  if (!from) return { error: "läget saknar startdatum" };
+  const ov = structuredClone(overlay ?? {});
+  ov.modes ??= {}; ov.modes.active ??= [];
+  const key = rule + "@" + from;
+  if (ov.modes.active.some(m => m.rule + "@" + m.from === key)) return { error: "läget är redan aktivt" };
+  ov.modes.active.push({ rule, from, to, t: now });
+  (ov.modes.log ??= []).push({ rule: "mode-on", session: null, action: "activate",
+    why: `${LIFE_MODES[rule].label} aktiverat från ${from}${to ? ` till ${to}` : ""}.`, t: now });
+  return { overlay: ov, key };
 }

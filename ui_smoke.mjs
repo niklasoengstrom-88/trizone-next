@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.8.1 · 2026-08-03
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.9.0 · 2026-08-03
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,8 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.8.1 · 2026-08-03" }),
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.9.0 · 2026-08-03" }
+                     : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -172,13 +173,56 @@ clickBtn({ nav: "plan" });
   ok(so.adjust.profile.every(p => p[0] <= 2), "downgrade lägger hela profilen i Z1–Z2");
   has(els.app.innerHTML, "Nedväxlat", "nedväxlat pass bär badge"); }
 
+/* ---------- Regelmotorn i UI (0.9.0) ---------- */
+clickBtn({ nav: "installningar" });
+has(els.app.innerHTML, "atlet", "atletvakten redovisas i paritetskortet (D-M2)");
+has(els.app.innerHTML, "Motorvärden", "motorvärden är redigerbara i profilen (P2)");
+has(els.app.innerHTML, 'data-eng="lowShareTarget"', "80/20-målet är ett fält, inte en sanning");
+{ els['[data-eng="lowShareTarget"]'] = { value: "70" };
+  clickBtn({ engsave: "" });
+  const cfg = JSON.parse(mem.get("trizone.next.cfg.v1"));
+  ok(Math.abs((cfg.engine?.lowShareTarget ?? 0) - 0.70) < 1e-9, "eget mål sparas som andel");
+  els['[data-eng="lowShareTarget"]'] = { value: "20" };
+  clickBtn({ engsave: "" });
+  has(els.app.innerHTML, "Avvisat", "orimligt värde avvisas med gränsen i klartext");
+  els['[data-eng="lowShareTarget"]'] = { value: "" };
+  clickBtn({ engsave: "" }); }
+clickBtn({ nav: "plan" });
+has(els.app.innerHTML, 'data-mode="mode-vacation"', "livslägen finns som chips i Plan");
+has(els.app.innerHTML, "aldrig blockgränser", "strukturskyddet står i klartext (D1)");
+{ clickBtn({ mode: "mode-vacation" });
+  const ov = JSON.parse(mem.get("trizone.overlay.v1"));
+  ok(ov.modes.active.some(m => m.rule === "mode-vacation"), "läget aktiveras och sparas");
+  const touched = Object.entries(ov.sessions).filter(([, v]) => v.adjust?.durationMin || v.status === "struck");
+  ok(touched.length > 0, "motorn ingriper: A-pass till underhållsdos, B-pass stryks");
+  ok(touched.every(([, v]) => v.events.some(e => e.rule === "mode-vacation")),
+     "P3: varje ingrepp lämnar läsbar post");
+  ok(!ov.sessions["sk-w42-swim-css"]?.status,
+     "läge som börjar idag rör inte gårdagens pass — inga retroaktiva ingrepp");
+  const before = touched.map(([id, v]) => [id, v.adjust?.durationMin ?? null, v.status ?? null]);
+  clickBtn({ nav: "idag" });
+  has(els.app.innerHTML, "modechip", "aktivt läge syns på Idag");
+  clickBtn({ nav: "plan" });
+  clickBtn({ mode: "mode-vacation" });
+  const off = JSON.parse(mem.get("trizone.overlay.v1"));
+  /* §9: motorns ingrepp återställs — men pass du själv rört behåller DIN version */
+  const mineToo = new Set(["sk-w42-bike-long", "sk-w42-run-easy"]);   /* justerade för hand i §5d-blocket */
+  const pure = before.map(([id]) => id).filter(id => !mineToo.has(id));
+  ok(pure.length > 0 && pure.every(id => !off.sessions[id].adjust?.durationMin && off.sessions[id].status !== "struck"),
+     "avaktivering återställer exakt det motorn gjorde (P5)");
+  ok(off.sessions["sk-w42-bike-long"].adjust?.durationMin === 90,
+     "pass du justerat för hand behåller din version — handen vinner över motorn (§9)");
+  ok(off.sessions["sk-w42-bike-long"].events.some(e => String(e.rule).startsWith("undo:")),
+     "och valet redovisas i passets historik");
+  ok(!off.modes.active.length, "läget är borta"); }
+
 /* ---------- Skalet (0.7.0): flikar och vyer ---------- */
 has(els.app.innerHTML, 'data-nav="plan"', "fliken Plan finns");
 has(els.app.innerHTML, 'data-nav="logg"', "fliken Logg finns");
 has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
 ok(!els.app.innerHTML.includes("Utanför plan"), "Utanför plan bor inte längre i planvyn");
 clickBtn({ nav: "installningar" });
-has(els.app.innerHTML, "next-0.8.1", "byggstämpeln bor i Inställningar (T2)");
+has(els.app.innerHTML, "next-0.9.0", "byggstämpeln bor i Inställningar (T2)");
 has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
 has(els.app.innerHTML, "Livsschema", "livsschemat är redigerbart i Inställningar (D7)");
 has(els.app.innerHTML, 'data-sched="2|Morgon"', "schemachipsen renderas per dag och fönster");

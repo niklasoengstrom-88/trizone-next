@@ -7,12 +7,15 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          todayView, planDayOf, effectiveRpe, logResult, unlogResult, FEEL_LABEL, sessionDate,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
-         actZoneMinutes, matchDate, backupExport, backupImport, zoneParity } from "./core.js";
+         actZoneMinutes, matchDate, backupExport, backupImport, zoneParity,
+         applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
+         ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.8.1 · 2026-08-03";
+export const UI_BUILD = "next-0.9.0 · 2026-08-03";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null,
+            eq:[], warns:[], seen:new Set(), modeOpen:false,
             view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[] };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
@@ -171,6 +174,14 @@ function renderIdag(h) {
   const t = todayView(S.plan, S.overlay, tISO);
   if (t.at) strip7(h, t.at.week, null);
 
+  const active = S.overlay?.modes?.active ?? [];
+  if (active.length) h.push(`<section class="modebar">${active.map(m =>
+    `<span class="modechip">${esc(LIFE_MODES[m.rule]?.label ?? m.rule)}</span>`).join("")}
+    <span class="hint">${esc(LIFE_MODES[active[0].rule]?.why ?? "")}</span></section>`);
+
+  questionCards(h);
+  warnStep(h);
+
   if (t.state === "pass") {
     h.push(heroCard(t.hero));
     if (t.also.length) h.push(`<div class="eyebrow alsohead">Även idag</div>
@@ -199,6 +210,18 @@ function renderIdag(h) {
 /* ---------- Plan: löpande veckolista (beslut B) ---------- */
 function renderPlan(h) {
   const weeks = planWeeks(S.plan);
+
+  h.push(`<section class="modes"><div class="eyebrow">Läget</div>
+    <div class="chiprow">${Object.entries(LIFE_MODES).map(([rule, m]) => {
+      const on = (S.overlay?.modes?.active ?? []).find(a => a.rule === rule);
+      return `<button class="modetog${on ? " on" : ""}" data-mode="${rule}"
+        aria-pressed="${!!on}">${m.label}</button>`;
+    }).join("")}</div>
+    <p class="hint">Lägen rör pass — aldrig blockgränser, loppdatum eller delmål. Allt går att ångra.</p>
+  </section>`);
+
+  questionCards(h);
+  warnStep(h);
 
   if (S.mq.length) {
     h.push(`<section class="confirm"><div class="eyebrow">Att bekräfta · ${S.mq.length}</div>`);
@@ -310,6 +333,18 @@ function renderSettings(h) {
   }
   if (S.cfgError) h.push(`<p class="hint bad">${esc(S.cfgError)}</p>`);
   h.push(`</section>`);
+
+  h.push(`<section class="setsec"><div class="eyebrow">Motorvärden</div>
+    <p class="hint">Dina gränser, inte appens sanningar. Tomt fält = standardvärdet.</p>`);
+  for (const [k, f] of Object.entries(ENGINE_FIELDS)) {
+    const cur = S.cfg.engine?.[k];
+    const shown = cur == null ? "" : (f.pct ? Math.round(cur * 100) : cur);
+    const def = f.pct ? Math.round(ENGINE[k] * 100) : ENGINE[k];
+    h.push(`<label class="lfl engrow"><span>${f.label} <span class="dim">(${f.unit}, standard ${def})</span></span>
+      <input type="number" data-eng="${k}" value="${shown}" min="${f.min}" max="${f.max}"
+        placeholder="${def}" inputmode="numeric"></label>`);
+  }
+  h.push(`<div class="acts"><button data-engsave>Spara motorvärden</button></div></section>`);
 
   const orphans = S.overlay?.orphans ?? [];
   if (orphans.length) {
@@ -468,6 +503,55 @@ function recomputeMatches() {
   S.mq = r2.questions; S.unplanned = r2.unplanned;
 }
 
+/* ---------- Regelmotorn (0.9.0) ----------
+   Motorn körs vid varje förändring. Nivå 1–2 med session ⇒ tillämpas och loggas.
+   Frågor ⇒ D2: motorn frågar, användaren svarar. Nivå 3 ⇒ varningar, aldrig ändring. */
+function runEngine({ apply = true } = {}) {
+  if (!S.plan) return;
+  const r = applyRules(S.plan, S.overlay, S.cfg, engineFlags(), now());
+  const changes = r.actions.filter(a => a.session && a.action !== "warn");
+  if (apply && changes.length) {
+    S.overlay = applyActions(S.overlay, changes);
+    const w = S.store.saveOverlay(S.overlay);
+    if (!w.ok) { S.note = { text: w.error, bad: true }; return; }
+  }
+  S.eq = r.questions ?? [];
+  S.warns = r.actions.filter(a => a.action === "warn");
+  if (changes.length) recomputeMatches();
+}
+
+/* Flaggor appen kan härleda själv idag. Wellness-baserade flaggor
+   (RHR, HRV, sömn) tillkommer med egen datapipeline — inga låtsasflaggor. */
+function engineFlags() {
+  const f = [];
+  for (const [id, so] of Object.entries(S.overlay?.sessions ?? {})) {
+    const r = so.rpe ?? (so.match ? actById(so.match.activityId)?.icu_rpe : null);
+    if (r != null && r >= 9) f.push({ id: "rpe-watch", sessionId: id });
+  }
+  return f;
+}
+
+function warnStep(h) {                     /* varningstrappan (designspråk §7) */
+  const unseen = S.warns.filter(w => !S.seen.has(w.rule + "|" + w.session));
+  if (!unseen.length) return;
+  h.push(`<section class="warnbanner"><div class="eyebrow">Motorn varnar · ${unseen.length}</div>
+    ${unseen.map(w => `<div class="wrow"><span class="evrule">${esc(w.rule)}</span>
+      <div class="evwhy">${esc(w.why)}</div></div>`).join("")}
+    <div class="acts"><button class="ghostbtn" data-warnack>Sett</button></div>
+    <p class="hint">Nivå 3 ändrar aldrig planen. Du bestämmer.</p></section>`);
+}
+
+function questionCards(h) {                /* D2: motorn frågar, användaren svarar */
+  if (!S.eq.length) return;
+  h.push(`<section class="qcards"><div class="eyebrow">Motorn frågar · ${S.eq.length}</div>`);
+  for (const q of S.eq) {
+    h.push(`<div class="qrow"><div class="qtext">${esc(q.ask)}</div>
+      <div class="qacts"><button data-eqyes="${esc(q.rule)}">Ja</button>
+      <button class="ghostbtn" data-eqno="${esc(q.rule)}">Nej</button></div></div>`);
+  }
+  h.push(`</section>`);
+}
+
 /* ---------- Lagring ---------- */
 function save(res, okText) {
   if (res.error) { S.note = { text: res.error, bad: true }; return; }
@@ -545,7 +629,15 @@ function endDrag(ev) {
       D = dragIdle; render(); return;
     }
     buzz(HAPTIC.drop);
-    moveTo(id, { week, day, slot: null }, `Flyttat: ${DAYLABEL[day]} v.${week}.`);
+    const pre = manualAdjust(S.plan, S.overlay, id, "move", { week, day, slot: null }, now());
+    let extra = "";
+    if (!pre.error) {                       /* motorn varnar men du bestämmer */
+      const r = applyRules(S.plan, pre.overlay, S.cfg, [], now());
+      const hit = r.actions.filter(a => a.action === "warn" && a.level === 3 &&
+        (a.session === id || (a.pair ?? []).includes(id)));
+      if (hit.length) extra = " ⚠ " + hit[0].why;
+    }
+    moveTo(id, { week, day, slot: null }, `Flyttat: ${DAYLABEL[day]} v.${week}.${extra}`);
   } else if (D.cancelled) {
     buzz(HAPTIC.cancel);
     S.note = { text: "Flytten avbröts — passet ligger kvar." };
@@ -614,9 +706,68 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-sched],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-sched],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave]");
     if (!t) return;
     S.note = null;
+    if (t.dataset.mode) {
+      const rule = t.dataset.mode;
+      const on = (S.overlay?.modes?.active ?? []).find(a => a.rule === rule);
+      if (on) {
+        S.overlay = deactivateMode(S.overlay, rule + "@" + on.from, now());
+        const w = S.store.saveOverlay(S.overlay);
+        S.note = w.ok ? { text: `${LIFE_MODES[rule].label} avslaget — föregående tillstånd återställt.` }
+                      : { text: w.error, bad: true };
+        runEngine({ apply: false });
+      } else {
+        const r = activateMode(S.overlay, rule, { from: today() }, now());
+        if (r.error) { S.note = { text: r.error, bad: true }; render(); return; }
+        S.overlay = r.overlay;
+        const w = S.store.saveOverlay(S.overlay);
+        if (!w.ok) { S.note = { text: w.error, bad: true }; render(); return; }
+        runEngine();
+        S.note = { text: `${LIFE_MODES[rule].label} aktiverat. ${LIFE_MODES[rule].why}` };
+      }
+      recomputeMatches(); render(); return;
+    }
+    if (t.dataset.eqyes) {
+      const q = S.eq.find(x => x.rule === t.dataset.eqyes);
+      if (q) {
+        const r = applyRules(S.plan, S.overlay, S.cfg,
+          [...engineFlags(), ...(q.sessions ?? []).map(id => ({ id: q.rule, sessionId: id, source: "manual" }))], now());
+        const ch = r.actions.filter(a => a.session && a.action !== "warn" && a.rule === q.rule);
+        S.overlay = applyActions(S.overlay, ch);
+        const w = S.store.saveOverlay(S.overlay);
+        S.note = w.ok ? { text: `${q.rule}: bekräftat — ${ch.length} pass ändrade.` } : { text: w.error, bad: true };
+        runEngine({ apply: false }); recomputeMatches();
+      }
+      render(); return;
+    }
+    if (t.dataset.eqno) {
+      S.eq = S.eq.filter(x => x.rule !== t.dataset.eqno);
+      S.note = { text: "Nej — planen är orörd." };
+      render(); return;
+    }
+    if (t.dataset.warnack != null) {
+      for (const w of S.warns) S.seen.add(w.rule + "|" + w.session);
+      render(); return;
+    }
+    if (t.dataset.engsave != null) {
+      const eng = {};
+      let bad = null;
+      for (const [k, f] of Object.entries(ENGINE_FIELDS)) {
+        const raw = document.querySelector(`[data-eng="${k}"]`)?.value ?? "";
+        if (raw === "") continue;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < f.min || n > f.max) { bad = `${f.label}: ${f.min}–${f.max} ${f.unit}`; break; }
+        eng[k] = f.pct ? n / 100 : n;
+      }
+      if (bad) { S.note = { text: "Avvisat — " + bad, bad: true }; render(); return; }
+      const next = { ...S.cfg, engine: eng };
+      const r = S.store.saveCfg(next);
+      if (r.ok) { S.cfg = next; S.note = { text: "Motorvärden sparade." }; runEngine({ apply: false }); }
+      else S.note = { text: r.error, bad: true };
+      render(); return;
+    }
     if (t.dataset.adjopen) { S.adjOpen = t.dataset.adjopen; S.logOpen = null; render(); return; }
     if (t.dataset.adjcancel != null) { S.adjOpen = null; render(); return; }
     if (t.dataset.adj) {
@@ -788,7 +939,16 @@ async function boot() {
     const res = await fetch("./plan.json", { cache: "no-cache" });
     const p = await res.json();
     const v = validatePlan(p);
-    if (v.ok) { S.plan = p; row("plan.json", `${p.planVersion} · ${p.sessions.length} pass, ${p.weeks.length} veckor`, "ok"); }
+    if (v.ok) {
+      const g = athleteGuard(p, S.cfg);                 /* D-M2: fel plan laddas aldrig tyst */
+      if (!g.ok) { row("plan.json", g.why, "bad"); row("atlet", g.why, "bad"); }
+      else {
+        if (g.adopt) { S.cfg = { ...S.cfg, athlete: g.adopt }; S.store.saveCfg(S.cfg); }
+        S.plan = p;
+        row("plan.json", `${p.planVersion} · ${p.sessions.length} pass, ${p.weeks.length} veckor`, "ok");
+        row("atlet", g.why, "ok");
+      }
+    }
     else row("plan.json", `${v.errors.length} fel: ${v.errors[0].path} — ${v.errors[0].msg}`, "bad");
   } catch (e) {
     S.plan = S.store.loadPlan();
@@ -821,6 +981,7 @@ async function boot() {
           + ` · RPE i ${nRpe} av dem`,
         cr.error ? "" : "ok");
     recomputeMatches();
+    runEngine();
   }
 
   row("haptik", hapticRow(), hapticLog.api ? "" : "bad");
