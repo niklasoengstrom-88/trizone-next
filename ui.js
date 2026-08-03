@@ -8,7 +8,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
          actZoneMinutes, matchDate, backupExport, backupImport } from "./core.js";
 
-export const UI_BUILD = "next-0.6.1 · 2026-08-02";
+export const UI_BUILD = "next-0.6.2 · 2026-08-02";
 
 /* Livsschema: profildata (D7). Framhäver träningsdagar — spärrar aldrig placering. */
 const BINDINGS = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
@@ -33,14 +33,28 @@ const findSess = (id) => {
   }
   return null;
 };
-/* Haptik (0.6.1). Två rotorsaker till 0.6.0-klagomålet åtgärdade:
-   (1) pulserna 4–10 ms låg under känseltröskeln på S25 — nu 12–45 ms;
-   (2) Chrome släpper bara igenom vibrate från timers (långtryckets armering)
-   om ett anrop redan skett inuti en pekargest — därför primas haptiken i
-   pointerdown. dag = tick per dagpassage; drop = bekräftelsemönster. */
-const HAPTIC = { prime: 1, arm: 18, day: 12, drop: [20, 30, 45], cancel: 8 };
-let buzzPrimed = false;
-const buzz = p => { try { navigator.vibrate?.(p); } catch {} };
+/* Haptik (0.6.2) — INSTRUMENTERAD. Två fixförsök har misslyckats; i stället för
+   ett tredje gissningsförsök mäter vi. `hapticLog` fångar API-läge och varje
+   anrops returvärde, redovisat i paritetskortet och i testknappen.
+   Känd begränsning: på touch ger pointerdown INTE användaraktivering i Chrome —
+   bara touchend/click gör det. Långtryckets armering sker i en timer före
+   touchend och kan därför blockeras tyst. Släppvibrationen läggs även på
+   pointerup, som följer touchend. */
+const HAPTIC = { arm: 18, day: 12, drop: [20, 30, 45], cancel: 8 };
+const hapticLog = { api: typeof navigator !== "undefined" && "vibrate" in navigator,
+                    calls: 0, lastArg: null, lastReturn: null, lastError: null };
+function buzz(p) {
+  hapticLog.calls++; hapticLog.lastArg = Array.isArray(p) ? p.join("-") : p;
+  try {
+    if (!navigator.vibrate) { hapticLog.lastReturn = "API saknas"; return false; }
+    hapticLog.lastReturn = navigator.vibrate(p);
+    return hapticLog.lastReturn;
+  } catch (e) { hapticLog.lastError = e.message; hapticLog.lastReturn = "kastade fel"; return false; }
+}
+const hapticRow = () => hapticLog.api
+  ? `API finns · ${hapticLog.calls} anrop · senast ${hapticLog.lastArg ?? "–"} ⇒ ${hapticLog.lastReturn ?? "–"}`
+       + (hapticLog.lastError ? ` (${hapticLog.lastError})` : "")
+  : "navigator.vibrate saknas i denna webbläsare";
 
 /* ---------- Delar ---------- */
 function zstrip(profile, big = false) {
@@ -141,17 +155,26 @@ function render() {
     h.push(`</section>`);
   }
   h.push(`<section class="backup"><div class="eyebrow">Säkerhetskopia</div>
-    <div class="acts"><button data-backup>Kopiera säkerhetskopia</button>
+    <div class="acts"><button data-download>Ladda ned fil</button>
+    <button class="ghostbtn" data-backup>Kopiera till urklipp</button>
     <button class="ghostbtn" data-import>Importera…</button></div>
+    <p class="hint">Filen innehåller alla placeringar, strykningar och länkar. Importen tar både fil och urklippstext.</p>
     ${S.importOpen ? `<textarea id="impbox" class="impbox" rows="4"
         placeholder="Klistra in säkerhetskopian här"></textarea>
-      <div class="acts"><button data-import-go>Importera kopian</button></div>` : ""}
+      <div class="acts"><button data-import-go>Importera kopian</button>
+      <label class="filelbl">Välj fil…<input type="file" id="impfile" accept=".json,application/json" style="display:none"></label></div>` : ""}
   </section>`);
   h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
   if (S.sel) { const s = findSess(S.sel); if (s) h.push(sheet(s)); }
   if (S.note) h.push(`<div class="toast${S.note.bad ? " bad" : ""}">${esc(S.note.text)}</div>`);
 
   app().innerHTML = h.join("");
+  document.getElementById("impfile")?.addEventListener("change", async (ev) => {
+    const f = ev.target.files?.[0];
+    if (!f) return;
+    try { importRaw(await f.text()); }
+    catch (e) { S.note = { text: "Filen gick inte att läsa: " + e.message, bad: true }; render(); }
+  });
 }
 
 function outcome(s) {
@@ -302,7 +325,6 @@ function wire() {
     if (!card) return;
     const wk = Number(ev.target.closest(".wk")?.id?.slice(3) ?? S.week);
     const grip = ev.pointerType === "mouse";      /* mus drar direkt; finger kräver alltid långtryck */
-    if (!buzzPrimed) { buzz(HAPTIC.prime); buzzPrimed = true; }   /* lås upp haptiken i gesten */
     D = dragReduce(dragIdle, { type: "down", id: card.dataset.sess, x: ev.clientX, y: ev.clientY,
                                t: Date.now(), grip, week: wk });
     root.setPointerCapture?.(ev.pointerId);
@@ -331,7 +353,10 @@ function wire() {
     autoscroll(ev.clientY);
   });
 
-  root.addEventListener("pointerup", (ev) => endDrag({ type: "up", t: Date.now() }));
+  root.addEventListener("pointerup", (ev) => {
+    if (D.phase === "drag") buzz(HAPTIC.drop);      /* pointerup följer touchend ⇒ aktivering finns */
+    endDrag({ type: "up", t: Date.now() });
+  });
   root.addEventListener("pointercancel", () => endDrag({ type: "cancel" }));
   root.addEventListener("touchmove", (ev) => { if (D.phase === "drag") ev.preventDefault(); }, { passive: false });
   document.addEventListener("keydown", (ev) => {
@@ -349,9 +374,21 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-import],[data-import-go]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go]");
     if (!t) return;
     S.note = null;
+    if (t.dataset.download != null) {
+      try {
+        const json = JSON.stringify(backupExport(S.overlay, S.plan.planVersion, now()), null, 2);
+        const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+        const a = document.createElement("a");
+        a.href = url; a.download = `trizone-next-backup-${now().slice(0, 10)}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        S.note = { text: `Fil skapad (${(json.length / 1024).toFixed(1)} kB) — spara den utanför telefonen.` };
+      } catch (e) { S.note = { text: "Nedladdning misslyckades: " + e.message, bad: true }; }
+      render(); return;
+    }
     if (t.dataset.backup != null) {
       const json = JSON.stringify(backupExport(S.overlay, S.plan.planVersion, now()));
       (navigator.clipboard?.writeText(json) ?? Promise.reject())
@@ -407,6 +444,20 @@ function wire() {
     }
     render();
   });
+}
+
+function importRaw(raw) {
+  const r = backupImport(raw, S.plan, now());
+  if (r.errors.length) { S.note = { text: "Import avvisad: " + r.errors[0], bad: true }; render(); return; }
+  S.overlay = r.overlay;
+  S.store.unblock();
+  const w = S.store.saveOverlay(S.overlay, { force: true });
+  S.note = w.ok
+    ? { text: `Importerad (${r.exported?.slice(0, 10) ?? "okänt datum"})`
+        + (r.orphans.length ? ` · ${r.orphans.length} föräldralösa väntar på beslut` : "") }
+    : { text: w.error, bad: true };
+  S.importOpen = false;
+  recomputeMatches(); render();
 }
 
 /* ---------- Start ---------- */
@@ -470,7 +521,17 @@ async function boot() {
     recomputeMatches();
   }
 
-  document.getElementById("diag").innerHTML = `<div class="kv">${diag.join("")}</div>`;
+  row("haptik", hapticRow(), hapticLog.api ? "" : "bad");
+  const diagEl = document.getElementById("diag");
+  diagEl.innerHTML = `<div class="kv">${diag.join("")}</div>
+    <div class="acts" style="margin-top:10px"><button class="ghostbtn" data-buzztest>Testa vibration</button></div>`;
+  diagEl.addEventListener("click", (ev) => {
+    if (!ev.target?.closest?.("[data-buzztest]")) return;
+    const r = buzz([120, 60, 120]);
+    S.note = { text: `Vibration: ${hapticRow()}${r === false ? " — webbläsaren NEKADE anropet" : ""}`,
+               bad: r === false || !hapticLog.api };
+    render();
+  });
   if (!S.plan) { app().innerHTML = `<p class="sub">Ingen giltig plan — veckan renderas inte. Se paritetskortet.</p>`; return; }
   wire();
   render();

@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.6.1 · 2026-08-02
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.6.2 · 2026-08-02
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -40,7 +40,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.6.1 · 2026-08-02" }),
+  querySelector: () => ({ content: "next-0.6.2 · 2026-08-02" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -76,7 +76,7 @@ const tapCard = (id, wk = 42) => { const t = target({ sess: id }, ["data-sess"],
 const clickBtn = dataset => fire("click", { target: target(dataset, Object.keys(dataset).map(k => "data-" + k)) });
 
 /* ---------- Löpande listan ---------- */
-has(els.diag.innerHTML, "next-0.6.1", "paritetskortet renderas");
+has(els.diag.innerHTML, "next-0.6.2", "paritetskortet renderas");
 has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
 has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
 has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
@@ -165,7 +165,6 @@ has(els.app.innerHTML, "Flyttat: fre v.43", "drag till en annan vecka i listan �
   ok(m?.week === 43 && m.day === 4 && m.slot === null, "dragets flytt sparad utan fönstertvång");
 }
 /* ---------- Haptiken är en kodväg, inte en förhoppning (0.6.0-regressionen) ---------- */
-ok(vibes.includes(1), "haptiken primas i första pekargesten (Chrome-upplåsningen)");
 ok(vibes.includes(18), "armeringen vibrerar kännbart (≥ 12 ms)");
 ok(vibes.includes(12), "dagbyte ger tick — man känner hur långt passet rest");
 ok(vibes.some(v => Array.isArray(v) && v.length === 3), "släppet ger bekräftelsemönster");
@@ -183,7 +182,10 @@ tapCard("sk-w42-swim-css"); clickBtn({ act: "restore" });
 ok(!JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-swim-css"].status, "strykningen går att häva");
 
 /* ---------- Säkerhetskopia (0.6.1) ---------- */
-has(els.app.innerHTML, "Kopiera säkerhetskopia", "backup-knappen renderas");
+has(els.app.innerHTML, "Ladda ned fil", "backupen kan laddas ned som fil (0.6.2)");
+has(els.app.innerHTML, "Kopiera till urklipp", "urklippsvägen finns kvar som alternativ");
+has(els.diag.innerHTML, "haptik", "paritetskortet redovisar haptikläget");
+has(els.diag.innerHTML, "data-buzztest", "testknapp för vibration finns");
 fire("click", { target: target({ backup: "" }, ["data-backup"]) });
 await new Promise(r => setTimeout(r, 10));
 ok(clipped && JSON.parse(clipped).kind === "trizone-next-backup", "kopian hamnar i urklipp");
