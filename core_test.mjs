@@ -875,6 +875,70 @@ import { DEFAULT_CFG, validateCfg } from "./core.js";
   ok(backupImport(JSON.stringify(bad), plan, NOW).errors[0].includes("cfg"),
      "trasig cfg i kopian avvisas med rotorsak"); }
 
+/* ================================================================
+   0.8.0 — IDAG-VYN: tillståndslogik, RPE-företräde, manuell loggning
+   ================================================================ */
+import { todayView, planDayOf, nextSession, effectiveRpe, logResult, unlogResult,
+         FEEL_LABEL } from "./core.js";
+
+/* Referensplanen: v42 mån 2026-10-12 … sön 2026-10-18. run-thr = tors (day 3). */
+{ eq(planDayOf(plan, "2026-10-15"), { week: 42, day: 3 }, "datum → planvecka och dag");
+  eq(planDayOf(plan, "2026-09-01"), null, "datum utanför planen → null"); }
+
+{ const t = todayView(plan, {}, "2026-10-15");
+  eq(t.state, "pass", "dag med oavklarat pass ⇒ hjälten är ett passkort");
+  eq(t.hero.id, "sk-w42-run-thr", "hjälten är dagens pass"); }
+{ const two = structuredClone(plan);
+  two.sessions.push({ ...two.sessions.find(x => x.id === "sk-w42-run-thr"),
+    id: "extra-b", prio: "B", title: "Extra" });
+  const t = todayView(two, {}, "2026-10-15");
+  eq([t.hero.prio, t.also.map(x => x.prio)], ["A", ["B"]],
+     "flera pass samma dag ⇒ A-prio tar hjälteplatsen, resten listas"); }
+{ const ov = applyMatchLinks({}, [{ sessionId: "sk-w42-run-thr", activityId: 9, score: 90 }], "auto", NOW);
+  eq(todayView(plan, ov, "2026-10-15").state, "done",
+     "alla dagens pass utförda ⇒ Klart för idag");
+  const struck = manualAdjust(plan, {}, "sk-w42-run-thr", "strike", {}, NOW).overlay;
+  eq(todayView(plan, struck, "2026-10-15").state, "rest",
+     "enda passet struket ⇒ dagen är vila, inte skuld"); }
+{ eq(todayView(plan, {}, "2026-10-12").state, "rest", "planlagd dag utan pass ⇒ vila");
+  eq(todayView(plan, {}, "2026-08-03").state, "off", "datum utanför planen ⇒ off");
+  const n = nextSession(plan, {}, "2026-10-12");
+  ok(n && n.date === "2026-10-13", "vilodagen vet vilket pass som kommer härnäst"); }
+
+/* ---------- RPE: klockan vinner, manuellt är fallback ---------- */
+{ eq(effectiveRpe({ rpe: 7 }, { icu_rpe: 3 }), { value: 3, source: "klockan" },
+     "härledd RPE från aktiviteten vinner över manuell");
+  eq(effectiveRpe({ rpe: 7 }, {}), { value: 7, source: "manuell" },
+     "utan klockdata gäller den manuella");
+  eq(effectiveRpe({}, { icu_rpe: 14 }), null, "orimlig RPE förkastas — ingen låtsassiffra");
+  eq(FEEL_LABEL[4], "stark", "känsloskalan 1–5 har svenska etiketter"); }
+{ const r = readActivityCache(JSON.stringify({ activities: [
+    { id: 1, type: "Run", start_date_local: "2026-10-15T18:00", moving_time: 1800, icu_rpe: 6, feel: 2, secret: "x" }] }));
+  eq([r.activities[0].icu_rpe, r.activities[0].feel, r.activities[0].secret],
+     [6, 2, undefined], "RPE och känsla överlever trimningen — okända fält gör det inte"); }
+
+/* ---------- Manuell loggning ---------- */
+{ const r = logResult(plan, {}, "sk-w42-str-core", { rpe: 6, userNote: "tungt men fint" }, NOW);
+  const so = r.overlay.sessions["sk-w42-str-core"];
+  eq([so.status, so.rpe, so.userNote], ["done", 6, "tungt men fint"],
+     "loggning sätter utfört + RPE + notering");
+  ok(so.events.at(-1).rule === "manual-log", "P3: loggningen lämnar post");
+  eq(todayView(plan, r.overlay, sessionDate(plan, plan.sessions.find(s=>s.id==="sk-w42-str-core"))).state,
+     "done", "manuellt loggat pass ger Klart för idag");
+  const u = unlogResult(r.overlay, "sk-w42-str-core", NOW);
+  eq([u.overlay.sessions["sk-w42-str-core"].status, u.overlay.sessions["sk-w42-str-core"].rpe],
+     [undefined, undefined], "ångra återställer exakt");
+  const v = validateOverlay(r.overlay);
+  ok(v.ok, "loggad overlay passerar valideringen (rpe/userNote är schemafält)"); }
+{ ok(logResult(plan, {}, "sk-w42-str-core", { rpe: 11 }, NOW).error?.includes("1–10"),
+     "RPE utanför skalan avvisas");
+  const struck = manualAdjust(plan, {}, "sk-w42-run-thr", "strike", {}, NOW).overlay;
+  ok(logResult(plan, struck, "sk-w42-run-thr", {}, NOW).error?.includes("struket"),
+     "struket pass loggas inte — strykningen äger (M3-mönstret)");
+  const linked = applyMatchLinks({}, [{ sessionId: "sk-w42-run-thr", activityId: 9, score: 90 }], "auto", NOW);
+  ok(unlogResult(linked, "sk-w42-run-thr", NOW).error?.includes("matchningen"),
+     "länkad status kan inte ångras manuellt — en sanning per fakta"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */

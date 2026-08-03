@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.7.0 · 2026-08-03";
+export const BUILD = "next-0.8.0 · 2026-08-03";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -1071,7 +1071,8 @@ export function edgeScroll(y, viewportH) {
    utfallsvisningen använder (matchning §3, F5). */
 const ACT_FIELDS = ["id", "type", "name", "start_date_local", "moving_time", "distance",
   "trainer", "icu_hr_zone_times", "icu_training_load", "average_heartrate", "icu_average_hr",
-  "average_watts", "icu_average_watts", "has_device_watts", "average_cadence"];
+  "average_watts", "icu_average_watts", "has_device_watts", "average_cadence",
+  "icu_rpe", "feel", "perceived_exertion"];   /* 0.8.0: klockans självskattning följer med */
 const looksLikeActivity = a => a && typeof a === "object" &&
   a.id != null && typeof a.type === "string" && (a.start_date_local || a.start_date);
 
@@ -1228,4 +1229,91 @@ export function backupImport(raw, plan, now = "") {
   const rec = reconcileOverlay(b.overlay, plan, now);          /* föräldralösa listas, raderas aldrig */
   return { overlay: rec.overlay, orphans: rec.orphans, errors: [],
            exported: b.exported, planVersion: b.planVersion, cfg };
+}
+
+
+/* ================================================================
+   IDAG-VYN (0.8.0) — tillståndsberoende hjälte (designspråk §6)
+   Ren funktion: (plan, overlay, dateISO) → dagens tillstånd.
+   ================================================================ */
+
+const PRIOORD = { A: 0, B: 1, C: 2 };
+
+/* Vilken vecka och dag ett ISO-datum faller på i planen, om någon */
+export function planDayOf(plan, dateISO) {
+  for (const wk of planWeeks(plan))
+    for (let d = 0; d < 7; d++)
+      if (sessionDate(plan, { week: wk, day: d }) === dateISO) return { week: wk, day: d };
+  return null;
+}
+
+/* (plan, overlay, dateISO) →
+   { state: "pass" | "done" | "rest" | "off", hero, also, done, next, at }
+   pass: minst ett oavklarat pass — hjälten är det högst prioriterade
+   done: alla dagens pass utförda/strukna, minst ett utfört
+   rest: dagen ligger i planen utan pass — vilodag enligt plan
+   off:  datumet ligger utanför planens veckor                       */
+export function todayView(plan, overlay, dateISO) {
+  const at = planDayOf(plan, dateISO);
+  const next = nextSession(plan, overlay, dateISO);
+  if (!at) return { state: "off", hero: null, also: [], done: [], next, at: null };
+  const v = weekView(plan, overlay, at.week);
+  const all = v.days[at.day].sessions;
+  const live = all.filter(s => s.status !== "struck");
+  const open = live.filter(s => s.status !== "done").sort((a, b) => (PRIOORD[a.prio] ?? 9) - (PRIOORD[b.prio] ?? 9));
+  const done = live.filter(s => s.status === "done");
+  if (open.length) return { state: "pass", hero: open[0], also: open.slice(1), done, next, at };
+  if (done.length) return { state: "done", hero: null, also: [], done, next, at };
+  return { state: "rest", hero: null, also: [], done: [], next, at };
+}
+
+/* Nästa oavklarade pass efter ett datum — för vilodagens "Nästa:" */
+export function nextSession(plan, overlay, dateISO) {
+  const out = [];
+  for (const wk of planWeeks(plan)) {
+    const v = weekView(plan, overlay, wk);
+    for (const d of v.days)
+      for (const s of d.sessions)
+        if (s.status !== "struck" && s.status !== "done" && d.date > dateISO)
+          out.push({ ...s, date: d.date });
+  }
+  out.sort((a, b) => a.date.localeCompare(b.date) || (PRIOORD[a.prio] ?? 9) - (PRIOORD[b.prio] ?? 9));
+  return out[0] ?? null;
+}
+
+/* ---------- RPE: härlett vinner, manuellt är fallback (§5c-mönstret) ---------- */
+export function effectiveRpe(overlaySession, activity) {
+  const a = activity?.icu_rpe ?? activity?.perceived_exertion;
+  if (a != null && a >= 1 && a <= 10) return { value: a, source: "klockan" };
+  const m = overlaySession?.rpe;
+  if (m != null && m >= 1 && m <= 10) return { value: m, source: "manuell" };
+  return null;
+}
+export const FEEL_LABEL = { 1: "mycket svag", 2: "svag", 3: "normal", 4: "stark", 5: "mycket stark" };
+
+/* ---------- Manuell loggning (matchning §6: pass utan mätdata) ---------- */
+export function logResult(plan, overlay, sessionId, { rpe = null, userNote = "" } = {}, now = "") {
+  const src = (plan?.sessions ?? []).find(s => s.id === sessionId);
+  if (!src) return { error: `okänt pass: ${sessionId}` };
+  if (rpe != null && !(rpe >= 1 && rpe <= 10)) return { error: `RPE ${rpe} utanför 1–10` };
+  const ov = structuredClone(overlay ?? {});
+  const so = (ov.sessions ??= {})[sessionId] ??= {};
+  if (so.status === "struck") return { error: "passet är struket — häv strykningen först" };
+  so.status = "done";
+  if (rpe != null) so.rpe = rpe;
+  if (userNote) so.userNote = userNote;
+  (so.events ??= []).push({ rule: "manual-log", session: sessionId, action: "warn",
+    why: `Markerat utfört manuellt${rpe != null ? ` · RPE ${rpe}` : ""}.`, t: now });
+  return { overlay: ov };
+}
+
+export function unlogResult(overlay, sessionId, now = "") {
+  const ov = structuredClone(overlay ?? {});
+  const so = ov.sessions?.[sessionId];
+  if (so?.match) return { error: "passet är länkat till en aktivitet — loggningen ägs av matchningen" };
+  if (!so || so.status !== "done") return { error: "ingen manuell loggning att ångra" };
+  delete so.status; delete so.rpe; delete so.userNote;
+  (so.events ??= []).push({ rule: "manual-unlog", session: sessionId, action: "warn",
+    why: "Manuell loggning ångrad.", t: now });
+  return { overlay: ov };
 }

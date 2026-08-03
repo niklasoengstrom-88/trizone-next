@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.7.0 · 2026-08-03
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.8.0 · 2026-08-03
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -27,12 +27,14 @@ const mkRoot = () => ({
 });
 const els = { app: mkRoot() };
 
+globalThis.__TZ_TODAY = "2026-10-15";   /* torsdag v.42 — run-thr-dagen */
 const mem = new Map([
   ["trizone.overlay.v1", JSON.stringify({ planVersion: "gammal-plan",
     sessions: { "forsvunnet-pass-1": { status: "done" } }, placed: {}, patches: [], modes: {}, orphans: [], archive: {} })],
   ["trizone.cache.v1", JSON.stringify({ data: { athlete: {}, activities: [
   { id: 901, type: "Run",  name: "Löpintervaller tröskel", start_date_local: "2026-10-15T18:05:00",
-    moving_time: 52 * 60, distance: 10400, icu_hr_zone_times: [720, 360, 120, 1500, 420] },
+    moving_time: 52 * 60, distance: 10400, icu_hr_zone_times: [720, 360, 120, 1500, 420],
+    icu_rpe: 6, feel: 4 },
   { id: 902, type: "Ride", name: "Kort cykel", start_date_local: "2026-10-16T18:00:00",
     moving_time: 100 * 60, distance: 50000 },
   { id: 903, type: "Swim", name: "Morgonsim", start_date_local: "2026-10-16T06:40:00",
@@ -43,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: () => ({ content: "next-0.7.0 · 2026-08-03" }),
+  querySelector: () => ({ content: "next-0.8.0 · 2026-08-03" }),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
   body: { classList: { add() {}, remove() {} }, appendChild() {} }
@@ -78,13 +80,62 @@ const tapCard = (id, wk = 42) => { const t = target({ sess: id }, ["data-sess"],
   ghostClick();                      /* värsta fallet: spökklicket landar på Stryk */ };
 const clickBtn = dataset => fire("click", { target: target(dataset, Object.keys(dataset).map(k => "data-" + k)) });
 
+/* ---------- Idag-vyn (0.8.0) ---------- */
+has(els.app.innerHTML, 'data-nav="idag"', "Idag-fliken finns och är första");
+has(els.app.innerHTML, "Klart för idag", "auto-matchat pass ⇒ hjälten är Klart för idag");
+has(els.app.innerHTML, "RPE 6 (klockan)", "klockans RPE visas med källa — härlett vinner");
+has(els.app.innerHTML, "kändes stark", "känsloskalan renderas som text, inte siffra");
+has(els.app.innerHTML, "strip7", "veckostrippen renderas ovanför vecket (L4)");
+has(els.app.innerHTML, 'class="sdot full"', "utfört pass = fylld grenprick");
+{ clickBtn({ selday: "42|5" });
+  has(els.app.innerHTML, "Lördag", "bläddring: vald dag tar hjältepositionen");
+  has(els.app.innerHTML, "Tillbaka till idag", "återvägen finns alltid");
+  clickBtn({ backtoday: "" });
+  has(els.app.innerHTML, "Klart för idag", "tillbaka till idag återställer hjälten"); }
+{ clickBtn({ selday: "42|0" });
+  has(els.app.innerHTML, "Ingen träning planerad", "dag utan pass i bläddring ⇒ vila");
+  clickBtn({ backtoday: "" }); }
+
+/* ---------- Manuell loggning (0.8.0) ---------- */
+clickBtn({ nav: "plan" });
+{ const t = target({ sess: "sk-w42-str-core" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 8, clientY: 8, pointerType: "touch", pointerId: 11 });
+  fire("pointerup", { target: t, t: Date.now() });
+  has(els.app.innerHTML, "Markera utfört", "oavklarat pass erbjuder loggning i panelen");
+  await new Promise(r => setTimeout(r, 520));
+  clickBtn({ logopen: "sk-w42-str-core" });
+  has(els.app.innerHTML, "logRpe", "loggformuläret öppnas");
+  els.logRpe = { value: "7" }; els.logNote = { value: "tungt men fint" };
+  clickBtn({ logsave: "sk-w42-str-core" });
+  const so = JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-str-core"];
+  ok(so.status === "done" && so.rpe === 7 && so.userNote === "tungt men fint",
+     "loggningen sparas: utfört + RPE + notering");
+  ok(so.events.some(e => e.rule === "manual-log"), "P3: loggningen lämnar post"); }
+{ const t = target({ sess: "sk-w42-str-core" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 8, clientY: 8, pointerType: "touch", pointerId: 13 });
+  fire("pointerup", { target: t, t: Date.now() });
+  has(els.app.innerHTML, "RPE 7 (manuell)", "manuell RPE visas i panelen när klockdata saknas");
+  await new Promise(r => setTimeout(r, 520));
+  fire("click", { target: target({ act: "close" }, ["data-act"]) }); }
+{ const t = target({ sess: "sk-w42-str-core" }, ["data-sess"], 42);
+  fire("pointerdown", { button: 0, target: t, clientX: 8, clientY: 8, pointerType: "touch", pointerId: 12 });
+  fire("pointerup", { target: t, t: Date.now() });
+  has(els.app.innerHTML, "Ångra loggning", "manuellt loggat pass kan ångras");
+  await new Promise(r => setTimeout(r, 520));
+  clickBtn({ unlog: "sk-w42-str-core" });
+  ok(!JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-str-core"].status,
+     "ångra återställer exakt"); }
+clickBtn({ nav: "installningar" });
+has(els.app.innerHTML, "RPE i 1 av dem", "aktivitetsraden räknar RPE-bärande aktiviteter — svaret på länk 2");
+clickBtn({ nav: "plan" });
+
 /* ---------- Skalet (0.7.0): flikar och vyer ---------- */
 has(els.app.innerHTML, 'data-nav="plan"', "fliken Plan finns");
 has(els.app.innerHTML, 'data-nav="logg"', "fliken Logg finns");
 has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
 ok(!els.app.innerHTML.includes("Utanför plan"), "Utanför plan bor inte längre i planvyn");
 clickBtn({ nav: "installningar" });
-has(els.app.innerHTML, "next-0.7.0", "byggstämpeln bor i Inställningar (T2)");
+has(els.app.innerHTML, "next-0.8.0", "byggstämpeln bor i Inställningar (T2)");
 has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
 has(els.app.innerHTML, "Livsschema", "livsschemat är redigerbart i Inställningar (D7)");
 has(els.app.innerHTML, 'data-sched="2|Morgon"', "schemachipsen renderas per dag och fönster");

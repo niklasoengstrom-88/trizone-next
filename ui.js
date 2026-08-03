@@ -4,22 +4,23 @@
 "use strict";
 import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          manualAdjust, shortDate, DAYLABEL, WINDOWS, DEFAULT_CFG, resolveOrphan,
+         todayView, planDayOf, effectiveRpe, logResult, unlogResult, FEEL_LABEL, sessionDate,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
          actZoneMinutes, matchDate, backupExport, backupImport } from "./core.js";
 
-export const UI_BUILD = "next-0.7.0 · 2026-08-03";
+export const UI_BUILD = "next-0.8.0 · 2026-08-03";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
-            acts:[], mq:[], unplanned:[], importOpen:false,
-            view:"plan", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[] };
+            acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null,
+            view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[] };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
     rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
 
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 const SPORTLABEL = { swim:"SIM", bike:"CYKEL", run:"LÖP", strength:"STYRKA" };
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => (globalThis.__TZ_TODAY ?? new Date().toISOString()).slice(0, 10);
 const now = () => new Date().toISOString();
 const app = () => document.getElementById("app");
 const findSess = (id) => {
@@ -80,10 +81,11 @@ function sessionCard(s) {
 }
 
 /* ---------- Vyväxling (0.7.0): Plan · Logg · Inställningar ---------- */
-const NAV = [["plan", "Plan"], ["logg", "Logg"], ["installningar", "Inställningar"]];
+const NAV = [["idag", "Idag"], ["plan", "Plan"], ["logg", "Logg"], ["installningar", "Inställningar"]];
 function render() {
   const h = [];
-  if (S.view === "plan") renderPlan(h);
+  if (S.view === "idag") renderIdag(h);
+  else if (S.view === "plan") renderPlan(h);
   else if (S.view === "logg") renderLogg(h);
   else renderSettings(h);
   h.push(`<nav class="tabs" aria-label="Huvudnavigering">` + NAV.map(([id, label]) =>
@@ -98,6 +100,99 @@ function render() {
     try { importRaw(await f.text()); }
     catch (e) { S.note = { text: "Filen gick inte att läsa: " + e.message, bad: true }; render(); }
   });
+}
+
+/* ---------- Idag: tillståndsberoende hjälte + veckostrip (§6, L4) ---------- */
+const WEEKDAY = ["Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag","Söndag"];
+
+function rpeRow(s) {
+  const so = S.overlay?.sessions?.[s.id];
+  const r = effectiveRpe(so, s.matchedActivity ? actById(s.matchedActivity) : null);
+  const feel = s.matchedActivity ? actById(s.matchedActivity)?.feel : null;
+  const bits = [];
+  if (r) bits.push(`RPE ${r.value} (${r.source})`);
+  if (feel && FEEL_LABEL[feel]) bits.push(`kändes ${FEEL_LABEL[feel]}`);
+  if (so?.userNote) bits.push(esc(so.userNote));
+  return bits.length ? `<p class="hint">${bits.join(" · ")}</p>` : "";
+}
+
+function heroCard(s, cta = true) {
+  return `<div class="sess hero" data-sess="${esc(s.id)}" tabindex="0" role="button"
+      aria-label="${esc(s.title ?? s.id)}, ${s.durationMin} minuter">
+    <i class="rib" style="background:var(--${esc(s.sport)})"></i>
+    <div class="line1">
+      <span class="prio p${esc(s.prio)}">${esc(s.prio)}</span>
+      <span class="lbl">${SPORTLABEL[s.sport] ?? esc(s.sport)}</span>
+      ${s.protected ? `<span class="shield">◈</span>` : ""}
+      <span class="dur">${s.durationMin} min</span>
+    </div>
+    <div class="herotitle">${esc(s.title ?? s.id)}</div>
+    ${s.text?.brief ? `<p class="serif herobrief">${esc(s.text.brief)}</p>` : ""}
+    ${zstrip(s.profile, true)}
+    ${cta ? `<div class="acts heroacts"><button data-logopen="${esc(s.id)}">Markera utfört</button></div>` : ""}
+  </div>`;
+}
+
+function strip7(h, wk, selDate) {
+  const v = weekView(S.plan, S.overlay, wk);
+  h.push(`<div class="strip7">` + v.days.map(d => {
+    const dots = d.sessions.filter(s => s.status !== "struck").map(s =>
+      `<i class="sdot${s.status === "done" ? " full" : ""}" style="color:var(--${esc(s.sport)})"></i>`).join("");
+    const cls = (d.date === today() ? " tod" : "") + (d.date === selDate ? " sel" : "");
+    return `<button class="scell${cls}" data-selday="${wk}|${d.day}">
+      <span class="sdl">${d.label}</span><span class="sdd">${Number(d.date.slice(8))}</span>
+      <span class="sdots">${dots}</span></button>`;
+  }).join("") + `</div>`);
+}
+
+function renderIdag(h) {
+  const tISO = today();
+  const at = planDayOf(S.plan, tISO);
+  const sel = S.selDay && !(S.selDay.week === at?.week && S.selDay.day === at?.day) ? S.selDay : null;
+
+  if (sel) {                                        /* bläddring: vald dag tar hjältepositionen */
+    const v = weekView(S.plan, S.overlay, sel.week);
+    const d = v.days[sel.day];
+    h.push(`<header class="viewhead"><h1>${WEEKDAY[sel.day]}</h1>
+      <span class="sub">${shortDate(d.date)} · v.${sel.week}</span></header>`);
+    strip7(h, sel.week, d.date);
+    const live = d.sessions.filter(s => s.status !== "struck");
+    if (live.length) h.push(`<div class="dsessions herolist">${live.map(s => sessionCard(s)).join("")}</div>`);
+    else h.push(`<section class="restcard"><div class="eyebrow">Vila</div>
+      <p class="serif">Ingen träning planerad den här dagen.</p></section>`);
+    h.push(`<div class="acts"><button class="ghostbtn" data-backtoday>Tillbaka till idag</button></div>`);
+    return;
+  }
+
+  h.push(`<header class="viewhead"><h1>Idag</h1>
+    <span class="sub">${WEEKDAY[new Date(tISO + "T12:00:00Z").getUTCDay() === 0 ? 6 : new Date(tISO + "T12:00:00Z").getUTCDay() - 1]} ${shortDate(tISO)}</span></header>`);
+
+  const t = todayView(S.plan, S.overlay, tISO);
+  if (t.at) strip7(h, t.at.week, null);
+
+  if (t.state === "pass") {
+    h.push(heroCard(t.hero));
+    if (t.also.length) h.push(`<div class="eyebrow alsohead">Även idag</div>
+      <div class="dsessions">${t.also.map(s => sessionCard(s)).join("")}</div>`);
+    if (t.done.length) h.push(`<div class="eyebrow alsohead">Utfört idag</div>
+      <div class="dsessions">${t.done.map(s => sessionCard(s)).join("")}</div>`);
+  }
+  else if (t.state === "done") {
+    h.push(`<section class="donecard"><div class="eyebrow">Klart för idag</div>
+      <p class="serif">Dagens träning är genomförd.</p>
+      <div class="dsessions">${t.done.map(s => sessionCard(s)).join("")}</div>
+      ${t.done.map(rpeRow).join("")}</section>`);
+  }
+  else if (t.state === "rest") {
+    h.push(`<section class="restcard"><div class="eyebrow">Vila</div>
+      <p class="serif">Ingen träning idag — vilan är en del av planen.</p>
+      ${t.next ? `<p class="hint">Nästa: ${WEEKDAY[t.next.day]} — ${esc(t.next.title)} · ${t.next.durationMin} min</p>` : ""}</section>`);
+  }
+  else {
+    h.push(`<section class="restcard"><div class="eyebrow">Utanför planen</div>
+      <p class="serif">Dagens datum ligger utanför planens veckor.</p>
+      ${t.next ? `<p class="hint">Planen börjar ${shortDate(t.next.date)}: ${esc(t.next.title)}.</p>` : ""}</section>`);
+  }
 }
 
 /* ---------- Plan: löpande veckolista (beslut B) ---------- */
@@ -263,6 +358,19 @@ function outcome(s) {
   return `<div class="dual">
     <div class="eyebrow">Plan</div>${zstrip(s.profile)}
     <div class="eyebrow" style="margin-top:8px">Utfört · ${min} min${km}</div>${strip}
+    ${rpeRow(s)}
+  </div>`;
+}
+
+function logForm(s) {
+  return `<div class="logform">
+    <div class="eyebrow">Markera utfört</div>
+    <label class="lfl">RPE 1–10 <span class="dim">(valfri — klockans värde vinner om passet matchas)</span>
+      <select id="logRpe"><option value="">–</option>${[1,2,3,4,5,6,7,8,9,10]
+        .map(n => `<option value="${n}">${n}</option>`).join("")}</select></label>
+    <label class="lfl">Notering <input id="logNote" type="text" maxlength="140" placeholder=""></label>
+    <div class="acts"><button data-logsave="${esc(s.id)}">Spara</button>
+      <button class="ghostbtn" data-logcancel>Avbryt</button></div>
   </div>`;
 }
 
@@ -278,8 +386,14 @@ function sheet(s) {
     ${s.text?.goal ? `<div class="tblock"><div class="eyebrow">Mot målet</div>
       <p class="serif">${esc(s.text.goal)}</p></div>` : ""}
     ${outcome(s)}
+    ${s.status === "done" && !s.matchedActivity ? rpeRow(s) : ""}
     ${s.text?.place ? `<p class="hint placenote">${esc(s.text.place)}</p>` : ""}
+    ${S.logOpen === s.id ? logForm(s) : ""}
     <div class="acts">
+      ${s.status !== "done" && s.status !== "struck" && S.logOpen !== s.id
+        ? `<button data-logopen="${esc(s.id)}">Markera utfört</button>` : ""}
+      ${s.status === "done" && !s.matchedActivity
+        ? `<button data-unlog="${esc(s.id)}">Ångra loggning</button>` : ""}
       <button data-act="move">${placed ? "Flytta" : "Placera"}</button>
       ${placed ? `<button data-act="unplace">Till menyn</button>` : ""}
       ${s.status === "struck" ? `<button data-act="restore">Ångra strykning</button>`
@@ -449,10 +563,30 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-sched],[data-orphan],[data-buzztest]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-sched],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog]");
     if (!t) return;
     S.note = null;
-    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; render(); return; }
+    if (t.dataset.selday) {
+      const [wk, d] = t.dataset.selday.split("|").map(Number);
+      S.selDay = { week: wk, day: d }; render(); return;
+    }
+    if (t.dataset.backtoday != null) { S.selDay = null; render(); return; }
+    if (t.dataset.logopen) { S.logOpen = t.dataset.logopen; S.sel = t.dataset.logopen; render(); return; }
+    if (t.dataset.logcancel != null) { S.logOpen = null; render(); return; }
+    if (t.dataset.logsave) {
+      const rpeRaw = document.getElementById("logRpe")?.value ?? "";
+      const note = document.getElementById("logNote")?.value?.trim() ?? "";
+      const r = logResult(S.plan, S.overlay, t.dataset.logsave,
+        { rpe: rpeRaw === "" ? null : Number(rpeRaw), userNote: note }, now());
+      S.logOpen = null;
+      save(r, "Markerat utfört.");
+      render(); return;
+    }
+    if (t.dataset.unlog) {
+      save(unlogResult(S.overlay, t.dataset.unlog, now()), "Loggningen ångrad.");
+      render(); return;
+    }
+    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; S.selDay = null; S.logOpen = null; render(); return; }
     if (t.dataset.sched) {
       const [d, w] = t.dataset.sched.split("|");
       const wins = new Set(S.cfg.schedule[d] ?? []);
@@ -616,8 +750,10 @@ async function boot() {
     /* Utfall: v32:s aktivitetscache, READ-ONLY (beslut 2026-08-02) */
     const cr = readActivityCache(window.localStorage.getItem("trizone.cache.v1"));
     S.acts = cr.activities;
+    const nRpe = cr.activities.filter(a => a.icu_rpe != null || a.perceived_exertion != null).length;
     row("aktiviteter", cr.error ? cr.error
-        : `${cr.activities.length} lästa ur v32-cachen (${cr.path}, read-only)`,
+        : `${cr.activities.length} lästa ur v32-cachen (${cr.path}, read-only)`
+          + ` · RPE i ${nRpe} av dem`,
         cr.error ? "" : "ok");
     recomputeMatches();
   }
