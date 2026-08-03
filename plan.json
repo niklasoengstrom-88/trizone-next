@@ -3,16 +3,9 @@
   "planVersion": "2026-08-03.1",
   "generated": "2026-08-03",
   "athlete": "niklas",
-  "anchor": {
-    "raceId": "jonkoping-703-2027"
-  },
+  "anchor": { "raceId": "jonkoping-703-2027" },
   "blocks": [
-    {
-      "id": "kal",
-      "label": "Kalmar & återhämtning",
-      "start": "2026-08-03",
-      "weeks": 4
-    }
+    { "id": "kal", "label": "Kalmar & återhämtning", "start": "2026-08-03", "weeks": 4 }
   ],
   "weeks": [
     {
@@ -54,25 +47,12 @@
       "protected": false,
       "title": "Lugn löpning 30 min",
       "durationMin": 30,
-      "profile": [
-        [
-          1,
-          8
-        ],
-        [
-          2,
-          17
-        ],
-        [
-          1,
-          5
-        ]
-      ],
+      "profile": [[1,8],[2,17],[1,5]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Första löpningen efter uppehållet. Syftet är att bekräfta att kroppen är igång, inte att träna.",
+        "exec": "Ren Z2, puls under 155. Låt tempot bli vad det blir. Inga stegringar, inga inslag. Känns något segt — korta av eller gå över i promenad.",
+        "place": "Måndag är veckans avstämning. Går passet bra öppnar det för tisdagens kvalitet.",
+        "goal": "Bekräftar att du kan gå in i veckans två skarpa pass utan att bygga på trötthet."
       }
     },
     {
@@ -84,45 +64,12 @@
       "protected": false,
       "title": "Cykel 3×5 min tävlingsfart",
       "durationMin": 45,
-      "profile": [
-        [
-          1,
-          10
-        ],
-        [
-          2,
-          5
-        ],
-        [
-          4,
-          5
-        ],
-        [
-          2,
-          3
-        ],
-        [
-          4,
-          5
-        ],
-        [
-          2,
-          3
-        ],
-        [
-          4,
-          5
-        ],
-        [
-          1,
-          9
-        ]
-      ],
+      "profile": [[1,10],[2,5],[4,5],[2,3],[4,5],[2,3],[4,5],[1,9]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Enda cykelpasset med skärpa före loppet. Kalmar körs hårdare än en olympisk distans eftersom löpningen bara är 4 km.",
+        "exec": "10 min uppvärmning stigande. Sedan 3×5 min på 225–235 W med 3 min lugnt emellan. Kadens 85–90. Alla tre intervaller ska ha samma effekt — den sista får inte vara hårdast.",
+        "place": "Tisdag ger två dagars marginal till torsdagens brick och gott om tid till loppet.",
+        "goal": "Kalibrerar benen mot den effekt du ska hålla i 30 minuter på tävlingen."
       }
     },
     {
@@ -134,21 +81,12 @@
       "protected": true,
       "title": "Skyddspasset",
       "durationMin": 30,
-      "profile": [
-        [
-          1,
-          20
-        ],
-        [
-          2,
-          10
-        ]
-      ],
+      "profile": [[1,20],[2,10]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Underhållsdos av stabilitet och rörlighet. Håller höft och bål igång utan att belasta benen.",
+        "exec": "Lätta vikter, två set per övning, aldrig till failure. Höft, säte, bål. Avsluta med rörlighet.",
+        "place": "Onsdag mellan de två skarpa passen — låg belastning som inte stör torsdagen.",
+        "goal": "Håller grunden intakt genom en vecka med låg volym."
       }
     },
     {
@@ -160,33 +98,12 @@
       "protected": false,
       "title": "Brick cykel + löp i tävlingsfart",
       "durationMin": 45,
-      "profile": [
-        [
-          1,
-          8
-        ],
-        [
-          2,
-          7
-        ],
-        [
-          4,
-          10
-        ],
-        [
-          3,
-          15
-        ],
-        [
-          1,
-          5
-        ]
-      ],
+      "profile": [[1,8],[2,7],[4,10],[3,15],[1,5]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Veckans viktigaste pass. Enda tillfället att öva Kalmars specifika krav: hård cykel direkt följd av kort snabb löpning.",
+        "exec": "25 min cykel där de sista 10 ligger i tävlingsfart. Snabb växling — utan strumpor. Sedan 15 min löpning på 5:00/km. Öva växlingen på riktigt, inte i lugn takt.",
+        "place": "Torsdag ger tre dagars återhämtning innan helgens lätta pass och gott om marginal till loppet.",
+        "goal": "Tränar övergången i den intensitet loppet kräver — det enda passet den här veckan som är race-specifikt."
       }
     },
     {
@@ -198,29 +115,12 @@
       "protected": false,
       "title": "Sim med några tävlingsfarts-100:or",
       "durationMin": 30,
-      "profile": [
-        [
-          1,
-          8
-        ],
-        [
-          2,
-          12
-        ],
-        [
-          4,
-          4
-        ],
-        [
-          1,
-          6
-        ]
-      ],
+      "profile": [[1,8],[2,12],[4,4],[1,6]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Vattenvana och en kort påminnelse om tävlingsfart. Simformen finns redan — det här är underhåll.",
+        "exec": "Öppet vatten om vädret och sällskapet tillåter, annars bassäng. Lugnt mestadels, med 4×100 i tävlingsfart insprängt. Starta på måltempo direkt, öppna inte hårdare.",
+        "place": "Lördag när det finns tid att ta sig till vatten.",
+        "goal": "Håller känslan för öppet vatten färsk inför en tävlingsstart i klunga."
       }
     },
     {
@@ -232,29 +132,12 @@
       "protected": false,
       "title": "Kort löpöppnare med stegringar",
       "durationMin": 25,
-      "profile": [
-        [
-          1,
-          6
-        ],
-        [
-          2,
-          14
-        ],
-        [
-          4,
-          2
-        ],
-        [
-          1,
-          3
-        ]
-      ],
+      "profile": [[1,6],[2,14],[4,2],[1,3]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Kort pass som håller benen påslagna in i loppveckan utan att lägga till trötthet.",
+        "exec": "20 min lugnt, sedan 4×20 sekunder stegringar med full vila emellan. Stegringarna byggs mjukt upp — aldrig maxutkört.",
+        "place": "Söndag avslutar veckan lätt och lämnar dig fräsch inför loppveckan.",
+        "goal": "Väcker snabbheten utan kostnad så nära tävling."
       }
     },
     {
@@ -266,29 +149,12 @@
       "protected": false,
       "title": "Cykelöppnare med korta inslag",
       "durationMin": 30,
-      "profile": [
-        [
-          1,
-          10
-        ],
-        [
-          2,
-          15
-        ],
-        [
-          4,
-          2
-        ],
-        [
-          1,
-          3
-        ]
-      ],
+      "profile": [[1,10],[2,15],[4,2],[1,3]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Kort öppnare två dagar före start. Håller benen igång, kostar ingenting.",
+        "exec": "Mestadels lugnt. Lägg in 2×1 minut i tävlingseffekt sent i passet. Inget mer — frestelsen att lägga på är veckans största risk.",
+        "place": "Måndag ger två dagars marginal till onsdagens start.",
+        "goal": "Håller cykelkänslan skarp utan att lämna trötthet till tävlingsdagen."
       }
     },
     {
@@ -300,29 +166,12 @@
       "protected": false,
       "title": "Mycket kort löpöppnare",
       "durationMin": 20,
-      "profile": [
-        [
-          1,
-          6
-        ],
-        [
-          2,
-          11
-        ],
-        [
-          4,
-          1
-        ],
-        [
-          1,
-          2
-        ]
-      ],
+      "profile": [[1,6],[2,11],[4,1],[1,2]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Sista rörelsen före start. Ett pass som får hoppas över utan att något går förlorat.",
+        "exec": "15 min lugnt plus 3×20 sekunder stegringar. Om du känner dig stel eller nervös räcker en promenad.",
+        "place": "Dagen före tävling — bara om du känner dig stel av vila.",
+        "goal": "Löser upp benen utan att påverka tävlingsdagen."
       }
     },
     {
@@ -334,37 +183,12 @@
       "protected": true,
       "title": "4:18:4 Kalmar — tävling",
       "durationMin": 65,
-      "profile": [
-        [
-          2,
-          3
-        ],
-        [
-          4,
-          9
-        ],
-        [
-          3,
-          2
-        ],
-        [
-          4,
-          31
-        ],
-        [
-          3,
-          2
-        ],
-        [
-          4,
-          18
-        ]
-      ],
+      "profile": [[2,3],[4,9],[3,2],[4,31],[3,2],[4,18]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Tävling: 400 m sim, 18 km cykel, 4 km löp. Måltid runt 1:04:50. Kort lopp — nära tröskel hela vägen.",
+        "exec": "Sim: gå ut kontrollerat men inte försiktigt, sighting var 6:e andetag. T1 utan strumpor. Cykel hårt och jämnt, 33–35 km/h. Löpningen är 4 km, inte 10 — gå ut på 5:00/km och öka. Kör ditt lopp, inte kollegornas.",
+        "place": "Onsdag kväll. Räkna in en hel arbetsdag före: ät ordentligt till lunch, mellanmål runt 16, drick genom hela dagen.",
+        "goal": "Här ligger tidsvinsten mot förra året i simningen och T1 — grenar du redan äger."
       }
     },
     {
@@ -376,25 +200,12 @@
       "protected": false,
       "title": "Lätt joggning efter tävling",
       "durationMin": 25,
-      "profile": [
-        [
-          1,
-          8
-        ],
-        [
-          2,
-          14
-        ],
-        [
-          1,
-          3
-        ]
-      ],
+      "profile": [[1,8],[2,14],[1,3]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Frivilligt rörelsepass ett par dagar efter loppet. Vila är ett lika bra val.",
+        "exec": "Helt lugnt, puls under 150. Känns benen tunga är promenad rätt val istället.",
+        "place": "Lördag, när kroppen hunnit återhämta sig ett par dagar.",
+        "goal": "Får igång blodcirkulationen utan att förlänga återhämtningen."
       }
     },
     {
@@ -406,25 +217,12 @@
       "protected": false,
       "title": "Lugn simning",
       "durationMin": 25,
-      "profile": [
-        [
-          1,
-          8
-        ],
-        [
-          2,
-          14
-        ],
-        [
-          1,
-          3
-        ]
-      ],
+      "profile": [[1,8],[2,14],[1,3]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Simning är det skonsammaste sättet att röra sig efter en tävling. Bonuspass.",
+        "exec": "Lugnt och kontinuerligt, ingen fart, inga intervaller. Teknik och känsla.",
+        "place": "Söndag avslutar loppveckan mjukt.",
+        "goal": "Håller vattenvanan vid liv utan belastning."
       }
     },
     {
@@ -436,21 +234,12 @@
       "protected": true,
       "title": "Skyddspasset",
       "durationMin": 35,
-      "profile": [
-        [
-          1,
-          25
-        ],
-        [
-          2,
-          10
-        ]
-      ],
+      "profile": [[1,25],[2,10]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Stabilitet och rörlighet återupptas först av allt. Lätt belastning, hög prioritet.",
+        "exec": "Kroppsvikt och lätta vikter. Höft, säte, bål. Två set per övning. Avsluta med rörlighet.",
+        "place": "Tisdag, tidigt i veckan medan resten fortfarande är lågintensivt.",
+        "goal": "Bygger grunden som ska bära den ökade löpvolymen i Bas-blocket."
       }
     },
     {
@@ -462,25 +251,12 @@
       "protected": false,
       "title": "Lugn löpning 30 min",
       "durationMin": 30,
-      "profile": [
-        [
-          1,
-          8
-        ],
-        [
-          2,
-          19
-        ],
-        [
-          1,
-          3
-        ]
-      ],
+      "profile": [[1,8],[2,19],[1,3]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Aerob återstart. Ingen fart, ingen distansjakt.",
+        "exec": "Ren Z2, puls under 155. Jämnt underlag. Låt tempot vara långsamt — det är meningen.",
+        "place": "Onsdag med vila på båda sidor.",
+        "goal": "Återupptar löprutinen på en nivå som inte kostar återhämtning."
       }
     },
     {
@@ -492,25 +268,12 @@
       "protected": false,
       "title": "Lugn cykel 50 min",
       "durationMin": 50,
-      "profile": [
-        [
-          1,
-          12
-        ],
-        [
-          2,
-          33
-        ],
-        [
-          1,
-          5
-        ]
-      ],
+      "profile": [[1,12],[2,33],[1,5]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Veckans längsta pass, men helt lågintensivt. Cykel är skonsammast av grenarna.",
+        "exec": "Z2 hela vägen, puls 115–140. Utomhus: välj plan rutt och backa av i stigningar hellre än att låta pulsen krypa upp.",
+        "place": "Lördag när det finns tid för ett längre pass.",
+        "goal": "Första steget tillbaka mot den aeroba volym Bas-blocket kräver."
       }
     },
     {
@@ -521,25 +284,12 @@
       "protected": false,
       "title": "Lugn simning 30 min",
       "durationMin": 30,
-      "profile": [
-        [
-          1,
-          10
-        ],
-        [
-          2,
-          17
-        ],
-        [
-          1,
-          3
-        ]
-      ],
+      "profile": [[1,10],[2,17],[1,3]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Simkontinuiteten återupptas. Lugnt, tekniskt, ingen fart.",
+        "exec": "Uppvärmning, teknikövningar, ett sammanhängande block i lugnt tempo. Ingen tidtagning.",
+        "place": "Placera själv där bassängtiderna passar.",
+        "goal": "Håller känslan i vattnet levande inför uppbyggnaden mot längre simdistans."
       }
     },
     {
@@ -550,25 +300,12 @@
       "protected": false,
       "title": "Extra lugn löpning",
       "durationMin": 30,
-      "profile": [
-        [
-          1,
-          8
-        ],
-        [
-          2,
-          19
-        ],
-        [
-          1,
-          3
-        ]
-      ],
+      "profile": [[1,8],[2,19],[1,3]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Bonuspass om veckan flyter på och kroppen känns pigg.",
+        "exec": "Samma som veckans andra löppass: ren Z2, inga inslag.",
+        "place": "Placera själv. Hoppa utan att jaga ikapp.",
+        "goal": "Extra aerob volym om utrymmet finns — annars ingen förlust."
       }
     },
     {
@@ -580,21 +317,12 @@
       "protected": true,
       "title": "Skyddspasset",
       "durationMin": 40,
-      "profile": [
-        [
-          1,
-          28
-        ],
-        [
-          2,
-          12
-        ]
-      ],
+      "profile": [[1,28],[2,12]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Styrkan börjar byggas igen inför Bas-blocket. Fortfarande kontrollerat, men mer volym än förra veckan.",
+        "exec": "Tre set på huvudövningarna, två på resten. Höft, säte, bål och ben. Kontrollerad sänkning, aldrig till failure.",
+        "place": "Måndag inleder veckan innan de aeroba passen.",
+        "goal": "Styrkan är den viktigaste förutsättningen för att kunna öka löpvolymen från september."
       }
     },
     {
@@ -606,33 +334,12 @@
       "protected": false,
       "title": "Cykel 60 min med Z3-block",
       "durationMin": 60,
-      "profile": [
-        [
-          1,
-          10
-        ],
-        [
-          2,
-          25
-        ],
-        [
-          3,
-          10
-        ],
-        [
-          2,
-          10
-        ],
-        [
-          1,
-          5
-        ]
-      ],
+      "profile": [[1,10],[2,25],[3,10],[2,10],[1,5]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Första passet med lite intensitet sedan loppet. Ett sammanhängande Z3-block i ett i övrigt lugnt pass.",
+        "exec": "Uppvärmning, sedan 10 minuter sammanhängande på 200–215 W. Resten Z2. Blocket ska kännas kontrollerat — det är inte ett tröskelpass.",
+        "place": "Tisdag, dagen efter styrka men med gott om marginal till helgens långpass.",
+        "goal": "Återinför intensitet försiktigt så att Bas-blocket kan starta från en fungerande grund."
       }
     },
     {
@@ -644,29 +351,12 @@
       "protected": false,
       "title": "Sim med tempoblock",
       "durationMin": 40,
-      "profile": [
-        [
-          1,
-          10
-        ],
-        [
-          2,
-          15
-        ],
-        [
-          3,
-          10
-        ],
-        [
-          1,
-          5
-        ]
-      ],
+      "profile": [[1,10],[2,15],[3,10],[1,5]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Simningen får tillbaka lite struktur. Fortfarande under tröskelfart.",
+        "exec": "Uppvärmning och teknik, sedan 5×100 på 2:10–2:15 med kort vila. Håll samma tempo på alla fem — öppna inte hårdare.",
+        "place": "Torsdag mellan veckans två tunga dagar.",
+        "goal": "Förbereder simningen för de längre distanser 70.3-uppbyggnaden kräver."
       }
     },
     {
@@ -678,25 +368,12 @@
       "protected": false,
       "title": "Längre lugn löpning 50 min",
       "durationMin": 50,
-      "profile": [
-        [
-          1,
-          10
-        ],
-        [
-          2,
-          35
-        ],
-        [
-          1,
-          5
-        ]
-      ],
+      "profile": [[1,10],[2,35],[1,5]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Veckans längsta löppass och första steget mot den löpvolym Bas-blocket bygger vidare på.",
+        "exec": "Ren Z2 hela vägen, puls under 155. Öka inte tempot i andra halvan även om det känns lätt. Jämnt underlag.",
+        "place": "Lördag när tiden finns och benen är utvilade från veckans övriga pass.",
+        "goal": "Sätter utgångsnivån för löpvolymen som ska byggas gradvis fram till juni 2027."
       }
     },
     {
@@ -707,32 +384,16 @@
       "protected": false,
       "title": "Extra lugn löpning",
       "durationMin": 30,
-      "profile": [
-        [
-          1,
-          8
-        ],
-        [
-          2,
-          19
-        ],
-        [
-          1,
-          3
-        ]
-      ],
+      "profile": [[1,8],[2,19],[1,3]],
       "text": {
-        "brief": "b",
-        "exec": "e",
-        "place": "p",
-        "goal": "g"
+        "brief": "Bonuspass som ger extra aerob volym om veckan tillåter.",
+        "exec": "Ren Z2, inga inslag. Håll det kortare om benen känns tunga efter helgens längre pass.",
+        "place": "Placera själv. Stryks utan kompensation.",
+        "goal": "Extra volym när utrymmet finns, utan att öka veckans totala belastning nämnvärt."
       }
     }
   ],
   "changelog": [
-    {
-      "planVersion": "2026-08-03.1",
-      "note": "Kalmar-veckan + återhämtning v.32–35"
-    }
+    { "planVersion": "2026-08-03.1", "note": "Kalmar-veckan + återhämtning v.32–35" }
   ]
 }
