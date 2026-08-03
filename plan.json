@@ -1,215 +1,58 @@
 {
   "formatVersion": 1,
-  "planVersion": "2026-08-02.1",
-  "generated": "2026-07-31",
+  "planVersion": "2026-08-03.1",
+  "generated": "2026-08-03",
   "athlete": "niklas",
   "anchor": {
     "raceId": "jonkoping-703-2027"
   },
   "blocks": [
     {
-      "id": "skelett",
-      "label": "Skelettblock",
-      "start": "2026-10-12",
-      "weeks": 3
+      "id": "kal",
+      "label": "Kalmar & återhämtning",
+      "start": "2026-08-03",
+      "weeks": 4
     }
   ],
   "weeks": [
     {
-      "week": 42,
-      "iso": "2026-W42",
-      "block": "skelett",
+      "week": 32,
+      "iso": "2026-W32",
+      "block": "kal",
       "type": "normal",
-      "focus": "Tröskelprogression löp, CSS-underhåll sim"
+      "focus": "Väck kroppen efter uppehållet och påminn benen om tävlingsfart. Låg volym, korta skarpa inslag, inga långpass."
     },
     {
-      "week": 43,
-      "iso": "2026-W43",
-      "block": "skelett",
-      "type": "normal",
-      "focus": "Progression: femte intervallen tillkommer"
+      "week": 33,
+      "iso": "2026-W33",
+      "block": "kal",
+      "type": "race",
+      "focus": "Loppvecka. Två mycket korta öppnare före start, tävling onsdag, sedan fri återhämtning resten av veckan."
     },
     {
-      "week": 44,
-      "iso": "2026-W44",
-      "block": "skelett",
-      "type": "test",
-      "focus": "Testvecka: FTP 20 min + CSS 400/200"
+      "week": 34,
+      "iso": "2026-W34",
+      "block": "kal",
+      "type": "recovery",
+      "focus": "Återhämtning efter tävling. Allt lågintensivt, inget som ska kännas ansträngande. Volym före fart."
+    },
+    {
+      "week": 35,
+      "iso": "2026-W35",
+      "block": "kal",
+      "type": "normal",
+      "focus": "Återuppbyggnad inför Bas-blocket 7 september. Aerob volym återkommer, första försiktiga Z3-inslagen."
     }
   ],
   "sessions": [
     {
-      "id": "sk-w42-swim-css",
-      "week": 42,
-      "day": 1,
-      "slot": "Lunch",
-      "sport": "swim",
-      "prio": "B",
-      "durationMin": 42,
-      "profile": [
-        [
-          1,
-          10
-        ],
-        [
-          2,
-          20
-        ],
-        [
-          3,
-          8
-        ],
-        [
-          1,
-          4
-        ]
-      ],
-      "text": {
-        "brief": "Teknik först, sedan CSS-blocket. Kvaliteten i vattnet sitter i vattenläget, inte i armarna.",
-        "exec": "400 in · 6×50 teknik · 4×200 CSS-tempo vila 20 s · 200 ut.",
-        "place": "Tisdagslunchen — banan är gles och passet ryms exakt.",
-        "goal": "CSS-blocken jagar målkravet på 1 900 m. Sekunderna köps med teknik, inte kraft."
-      },
-      "title": "CSS-intervaller 8×100 m"
-    },
-    {
-      "id": "sk-w42-str-core",
-      "week": 42,
-      "day": 2,
-      "slot": "Kväll",
-      "sport": "strength",
-      "prio": "B",
-      "protected": true,
-      "durationMin": 40,
-      "profile": [
-        [
-          1,
-          40
-        ]
-      ],
-      "text": {
-        "brief": "Skyddspasset. Det syns aldrig i måltiderna — det är förutsättningen för dem.",
-        "exec": "Bål, höft, ben. 2–3 reps i reserv, inga PR.",
-        "place": "Onsdag kväll — dagen före kvalitetslöpningen vore fel plats för tunga ben.",
-        "goal": "Skadefri är träningsbar. Träningsbar är det enda som bygger totaltiden."
-      },
-      "title": "Styrka: höft och bål"
-    },
-    {
-      "id": "sk-w42-run-thr",
-      "week": 42,
-      "day": 3,
-      "slot": "Kväll",
+      "id": "kal-w1-run-easy",
+      "week": 32,
+      "day": 0,
       "sport": "run",
-      "prio": "A",
-      "durationMin": 50,
-      "profile": [
-        [
-          1,
-          12
-        ],
-        [
-          4,
-          6
-        ],
-        [
-          1,
-          2
-        ],
-        [
-          4,
-          6
-        ],
-        [
-          1,
-          2
-        ],
-        [
-          4,
-          6
-        ],
-        [
-          1,
-          2
-        ],
-        [
-          4,
-          6
-        ],
-        [
-          1,
-          8
-        ]
-      ],
-      "text": {
-        "brief": "Veckans viktigaste pass. Fyra tröskelblock — sista ska kännas som att en femte varit möjlig.",
-        "exec": "12 min Z1 in · 4×6 min strax under tröskel, 2 min jogg · 8 min ut.",
-        "place": "Torsdag kväll ger två dygn till helgens långa cykel.",
-        "goal": "Tröskelblocken flyttar den uthålliga farten som halvmaran vilar på."
-      },
-      "title": "Löpintervaller 4×6 min tröskel"
-    },
-    {
-      "id": "sk-w42-bike-long",
-      "week": 42,
-      "day": 5,
-      "slot": "Morgon",
-      "sport": "bike",
-      "prio": "A",
-      "durationMin": 150,
-      "profile": [
-        [
-          1,
-          20
-        ],
-        [
-          2,
-          110
-        ],
-        [
-          1,
-          20
-        ]
-      ],
-      "text": {
-        "brief": "Durationståligheten byggs här — kroppen ska lära sig hålla Z2 och ta emot näring i timmar.",
-        "exec": "Jämn Z2. 60–80 g kolhydrat per timme. Kadens 85–90.",
-        "place": "Lördagsmorgonen är veckans enda långa fönster.",
-        "goal": "Nio mil på tävlingsdagen är främst en durationsfråga."
-      },
-      "title": "Långpass cykel Z2"
-    },
-    {
-      "id": "sk-w42-run-easy",
-      "week": 42,
-      "day": 6,
-      "slot": "Kväll",
-      "sport": "run",
-      "prio": "C",
-      "durationMin": 35,
-      "profile": [
-        [
-          1,
-          10
-        ],
-        [
-          2,
-          25
-        ]
-      ],
-      "text": {
-        "brief": "Bonuspass. Blir det av adderar det — blir det inte av har inget hänt.",
-        "exec": "Lugn Z2, samtalstempo hela vägen.",
-        "place": "",
-        "goal": "Z2-volymen är grunden som gör målfarten hållbar."
-      },
-      "title": "Lugn löpning"
-    },
-    {
-      "id": "sk-w42-swim-ow",
-      "week": 42,
-      "sport": "swim",
-      "prio": "C",
+      "prio": "B",
+      "protected": false,
+      "title": "Lugn löpning 30 min",
       "durationMin": 30,
       "profile": [
         [
@@ -218,90 +61,596 @@
         ],
         [
           2,
-          22
+          17
+        ],
+        [
+          1,
+          5
         ]
       ],
       "text": {
-        "brief": "Oplacerat menypass — lägg det där veckan tillåter, eller låt bli.",
-        "exec": "Lugn distans, valfri miljö.",
-        "place": "",
-        "goal": "Vattenvana är färskvara."
-      },
-      "title": "Öppet vatten, teknik"
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
     },
     {
-      "id": "sk-w43-run-thr",
-      "week": 43,
-      "day": 2,
-      "slot": "Kväll",
-      "sport": "run",
+      "id": "kal-w1-bike-race",
+      "week": 32,
+      "day": 1,
+      "sport": "bike",
       "prio": "A",
-      "durationMin": 56,
+      "protected": false,
+      "title": "Cykel 3×5 min tävlingsfart",
+      "durationMin": 45,
+      "profile": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          1,
+          9
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w1-strength",
+      "week": 32,
+      "day": 2,
+      "sport": "strength",
+      "prio": "B",
+      "protected": true,
+      "title": "Skyddspasset",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          20
+        ],
+        [
+          2,
+          10
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w1-brick-race",
+      "week": 32,
+      "day": 3,
+      "sport": "bike",
+      "prio": "A",
+      "protected": false,
+      "title": "Brick cykel + löp i tävlingsfart",
+      "durationMin": 45,
+      "profile": [
+        [
+          1,
+          8
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          3,
+          15
+        ],
+        [
+          1,
+          5
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w1-swim-ow",
+      "week": 32,
+      "day": 5,
+      "sport": "swim",
+      "prio": "B",
+      "protected": false,
+      "title": "Sim med några tävlingsfarts-100:or",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          8
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          1,
+          6
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w1-run-open",
+      "week": 32,
+      "day": 6,
+      "sport": "run",
+      "prio": "B",
+      "protected": false,
+      "title": "Kort löpöppnare med stegringar",
+      "durationMin": 25,
+      "profile": [
+        [
+          1,
+          6
+        ],
+        [
+          2,
+          14
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w2-bike-open",
+      "week": 33,
+      "day": 0,
+      "sport": "bike",
+      "prio": "B",
+      "protected": false,
+      "title": "Cykelöppnare med korta inslag",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          15
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w2-run-open",
+      "week": 33,
+      "day": 1,
+      "sport": "run",
+      "prio": "C",
+      "protected": false,
+      "title": "Mycket kort löpöppnare",
+      "durationMin": 20,
+      "profile": [
+        [
+          1,
+          6
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w2-race",
+      "week": 33,
+      "day": 2,
+      "sport": "bike",
+      "prio": "A",
+      "protected": true,
+      "title": "4:18:4 Kalmar — tävling",
+      "durationMin": 65,
+      "profile": [
+        [
+          2,
+          3
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          4,
+          31
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          4,
+          18
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w2-run-easy",
+      "week": 33,
+      "day": 5,
+      "sport": "run",
+      "prio": "C",
+      "protected": false,
+      "title": "Lätt joggning efter tävling",
+      "durationMin": 25,
+      "profile": [
+        [
+          1,
+          8
+        ],
+        [
+          2,
+          14
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w2-swim-easy",
+      "week": 33,
+      "day": 6,
+      "sport": "swim",
+      "prio": "C",
+      "protected": false,
+      "title": "Lugn simning",
+      "durationMin": 25,
+      "profile": [
+        [
+          1,
+          8
+        ],
+        [
+          2,
+          14
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w3-strength",
+      "week": 34,
+      "day": 1,
+      "sport": "strength",
+      "prio": "A",
+      "protected": true,
+      "title": "Skyddspasset",
+      "durationMin": 35,
+      "profile": [
+        [
+          1,
+          25
+        ],
+        [
+          2,
+          10
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w3-run-easy",
+      "week": 34,
+      "day": 2,
+      "sport": "run",
+      "prio": "B",
+      "protected": false,
+      "title": "Lugn löpning 30 min",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          8
+        ],
+        [
+          2,
+          19
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w3-bike-easy",
+      "week": 34,
+      "day": 5,
+      "sport": "bike",
+      "prio": "B",
+      "protected": false,
+      "title": "Lugn cykel 50 min",
+      "durationMin": 50,
       "profile": [
         [
           1,
           12
         ],
         [
-          4,
-          6
+          2,
+          33
         ],
         [
           1,
-          2
-        ],
-        [
-          4,
-          6
-        ],
-        [
-          1,
-          2
-        ],
-        [
-          4,
-          6
-        ],
-        [
-          1,
-          2
-        ],
-        [
-          4,
-          6
-        ],
-        [
-          1,
-          2
-        ],
-        [
-          4,
-          6
-        ],
-        [
-          1,
-          6
+          5
         ]
       ],
       "text": {
-        "brief": "Progressionen: femte blocket tillkommer. Samma tempo som förra veckan — inte snabbare.",
-        "exec": "5×6 min strax under tröskel, 2 min jogg.",
-        "place": "Onsdag kväll, två dygn före långpasset.",
-        "goal": "Volym på tröskelfarten, inte fart på tröskeln."
-      },
-      "title": "Löpintervaller 5×6 min tröskel"
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
     },
     {
-      "id": "sk-w44-bike-ftp",
-      "week": 44,
-      "day": 2,
-      "slot": "Kväll",
+      "id": "kal-w3-swim-easy",
+      "week": 34,
+      "sport": "swim",
+      "prio": "B",
+      "protected": false,
+      "title": "Lugn simning 30 min",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          17
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w3-run-easy2",
+      "week": 34,
+      "sport": "run",
+      "prio": "C",
+      "protected": false,
+      "title": "Extra lugn löpning",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          8
+        ],
+        [
+          2,
+          19
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w4-strength",
+      "week": 35,
+      "day": 0,
+      "sport": "strength",
+      "prio": "A",
+      "protected": true,
+      "title": "Skyddspasset",
+      "durationMin": 40,
+      "profile": [
+        [
+          1,
+          28
+        ],
+        [
+          2,
+          12
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w4-bike-end",
+      "week": 35,
+      "day": 1,
       "sport": "bike",
       "prio": "A",
+      "protected": false,
+      "title": "Cykel 60 min med Z3-block",
       "durationMin": 60,
       "profile": [
         [
           1,
+          10
+        ],
+        [
+          2,
+          25
+        ],
+        [
+          3,
+          10
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          1,
+          5
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w4-swim-css",
+      "week": 35,
+      "day": 3,
+      "sport": "swim",
+      "prio": "B",
+      "protected": false,
+      "title": "Sim med tempoblock",
+      "durationMin": 40,
+      "profile": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
           15
         ],
         [
@@ -311,33 +660,79 @@
         [
           1,
           5
-        ],
-        [
-          5,
-          20
-        ],
-        [
-          1,
-          10
         ]
       ],
       "text": {
-        "brief": "FTP-testet. 20 minuter ärlighet — prognosen låses upp av det här passet.",
-        "exec": "Uppvärmning · 10 min stegring · 20 min max jämn effekt · nedvarvning.",
-        "place": "Testvecka: utvilade ben, inomhus, wattmätare.",
-        "goal": "Testet sätter wattbudgeten för hela cykelmålet."
-      },
-      "title": "FTP-test 20 min"
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w4-run-long",
+      "week": 35,
+      "day": 5,
+      "sport": "run",
+      "prio": "A",
+      "protected": false,
+      "title": "Längre lugn löpning 50 min",
+      "durationMin": 50,
+      "profile": [
+        [
+          1,
+          10
+        ],
+        [
+          2,
+          35
+        ],
+        [
+          1,
+          5
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
+    },
+    {
+      "id": "kal-w4-run-easy",
+      "week": 35,
+      "sport": "run",
+      "prio": "C",
+      "protected": false,
+      "title": "Extra lugn löpning",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          8
+        ],
+        [
+          2,
+          19
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "text": {
+        "brief": "b",
+        "exec": "e",
+        "place": "p",
+        "goal": "g"
+      }
     }
   ],
   "changelog": [
     {
-      "planVersion": "2026-07-31.1",
-      "note": "Skelettblock för produktionsstart — valideringsreferens, inte träningsplan"
-    },
-    {
-      "planVersion": "2026-08-02.1",
-      "note": "Titlar tillagda på referensblockets pass (veckovyn kräver dem)"
+      "planVersion": "2026-08-03.1",
+      "note": "Kalmar-veckan + återhämtning v.32–35"
     }
   ]
 }
