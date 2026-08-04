@@ -5,16 +5,18 @@
 import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          manualAdjust, shortDate, DAYLABEL, WINDOWS, SPORTS, DEFAULT_CFG, resolveOrphan,
          todayView, planDayOf, effectiveRpe, logResult, unlogResult, FEEL_LABEL, sessionDate,
+         monthView, planMonths,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
          actZoneMinutes, matchDate, backupExport, backupImport, zoneParity,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.9.1 · 2026-08-03";
+export const UI_BUILD = "next-0.9.2 · 2026-08-04";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
+            monthOpen:false, monthYM:null,
             eq:[], warns:[], seen:new Set(), modeOpen:false,
             view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[] };
 const actById = id => S.acts.find(a => a.id === id);
@@ -139,7 +141,38 @@ function heroCard(s, cta = true) {
   </div>`;
 }
 
+function monthPanel(h, selDate) {
+  const months = planMonths(S.plan);
+  if (!S.monthYM || !months.includes(S.monthYM)) {
+    const t = today().slice(0, 7);
+    S.monthYM = months.includes(t) ? t : months[0];
+  }
+  const m = monthView(S.plan, S.overlay, S.monthYM);
+  const i = months.indexOf(S.monthYM);
+  h.push(`<div class="mwrap" data-stripzone>
+    <div class="mhead">
+      <button class="mnav" data-mprev ${i <= 0 ? "disabled" : ""} aria-label="Föregående månad">‹</button>
+      <span class="mlabel">${esc(m.label)}</span>
+      <button class="mnav" data-mnext ${i >= months.length - 1 ? "disabled" : ""} aria-label="Nästa månad">›</button>
+    </div>
+    <div class="mgrid">
+      <span class="mwk"></span>${["M","T","O","T","F","L","S"].map(d => `<span class="mdow">${d}</span>`).join("")}
+      ${m.rows.map(r => `<span class="mwk">${r.week ?? ""}</span>` + r.days.map(d => {
+        const cls = (d.inMonth ? "" : " out") + (d.date === today() ? " tod" : "") + (d.date === selDate ? " sel" : "");
+        const dots = d.dots.map(x =>
+          `<i class="sdot${x.done ? " full" : ""}" style="color:var(--${esc(x.sport)})"></i>`).join("");
+        return d.at
+          ? `<button class="mcell${cls}" data-selday="${d.at.week}|${d.at.day}">
+               <span class="mdd">${Number(d.date.slice(8))}</span><span class="sdots">${dots}</span></button>`
+          : `<span class="mcell${cls}"><span class="mdd">${Number(d.date.slice(8))}</span></span>`;
+      }).join("")).join("")}
+    </div>
+    <button class="mtoggle" data-monthtoggle aria-label="Fäll ihop månaden">▴</button>
+  </div>`);
+}
+
 function strip7(h, wk, selDate) {
+  if (S.monthOpen) { monthPanel(h, selDate); return; }   /* månaden ersätter strippen (§7) */
   const v = weekView(S.plan, S.overlay, wk);
   h.push(`<div class="strip7">` + v.days.map(d => {
     const dots = d.sessions.filter(s => s.status !== "struck").map(s =>
@@ -148,7 +181,8 @@ function strip7(h, wk, selDate) {
     return `<button class="scell${cls}" data-selday="${wk}|${d.day}">
       <span class="sdl">${d.label}</span><span class="sdd">${Number(d.date.slice(8))}</span>
       <span class="sdots">${dots}</span></button>`;
-  }).join("") + `</div>`);
+  }).join("") + `</div>
+  <button class="mtoggle" data-monthtoggle aria-label="Visa månaden">▾</button>`);
 }
 
 function renderIdag(h) {
@@ -260,6 +294,9 @@ function renderPlan(h) {
           <span><b>${Math.round(sum.minutes / 6) / 10}</b> h</span>
           ${sum.lowShare != null ? `<span><b>${Math.round(sum.lowShare * 100)} %</b> lågintensivt</span>` : ""}
           ${sum.struck ? `<span class="dim">${sum.struck} struket</span>` : ""}
+          ${(() => { const live = v.days.flatMap(d => d.sessions).filter(s => s.status !== "struck" && s.prio !== "C");
+             const done = live.filter(s => s.status === "done").length;
+             return done ? `<span class="compl"><b>${done}</b> av ${live.length} utförda</span>` : ""; })()}
         </div>
         ${sum.minutes ? `<div class="wkzone">${zstrip(sum.zones.map((m, z) => [z + 1, m]).filter(p => p[1] > 0), true)}
           ${wi === 0 ? `<span class="legend">ljusare = hårdare</span>` : ""}</div>` : ""}
@@ -713,9 +750,16 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-monthtoggle],[data-mprev],[data-mnext]");
     if (!t) return;
     S.note = null;
+    if (t.dataset.monthtoggle != null) { S.monthOpen = !S.monthOpen; render(); return; }
+    if (t.dataset.mprev != null || t.dataset.mnext != null) {
+      const months = planMonths(S.plan);
+      const i = months.indexOf(S.monthYM);
+      S.monthYM = months[Math.max(0, Math.min(months.length - 1, i + (t.dataset.mnext != null ? 1 : -1)))];
+      render(); return;
+    }
     if (t.dataset.evlog != null) { S.evOpen = !S.evOpen; render(); return; }
     if (t.dataset.histopen) { S.histOpen = t.dataset.histopen; render(); return; }
     if (t.dataset.histclose != null) { S.histOpen = null; render(); return; }
@@ -910,6 +954,23 @@ function importRaw(raw) {
   recomputeMatches(); render();
 }
 
+/* Swipe på strippen (produktägarens beställning): ned ⇒ månad, upp ⇒ strip.
+   Ren y-delta på pekare; ett tryck förblir ett tryck (selday-klicket rör sig inte). */
+function wireStripSwipe(root) {
+  let y0 = null, inZone = false;
+  root.addEventListener("pointerdown", (ev) => {
+    inZone = !!ev.target.closest?.(".strip7,.mwrap");
+    y0 = inZone ? ev.clientY : null;
+  });
+  root.addEventListener("pointerup", (ev) => {
+    if (!inZone || y0 == null) return;
+    const dy = ev.clientY - y0;
+    y0 = null; inZone = false;
+    if (dy > 48 && !S.monthOpen) { S.monthOpen = true; render(); }
+    else if (dy < -48 && S.monthOpen) { S.monthOpen = false; render(); }
+  });
+}
+
 /* ---------- Start ---------- */
 async function boot() {
   const stamp = UI_BUILD.split(" ")[0];
@@ -988,6 +1049,7 @@ async function boot() {
   row("haptik", hapticRow(), hapticLog.api ? "" : "bad");
   if (!S.plan) { S.view = "installningar"; render(); return; }   /* felläget landar där pariteten bor */
   wire();
+  wireStripSwipe(app());
   render();
   document.getElementById("wk-" + S.week)?.scrollIntoView();
 }

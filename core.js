@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.9.1 · 2026-08-03";
+export const BUILD = "next-0.9.2 · 2026-08-04";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -541,9 +541,12 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     }
     const st = a.sport === "strength" ? a : b.sport === "strength" ? b : null;
     const q  = st === a ? b : a;
-    if (st && st.sport === "strength" && isQuality(q)) {
+    /* Enkelriktad (spec 1 §6 rev 2026-08-04): regeln skyddar KVALITETSPASSET från
+       trötta ben — styrka dagen efter kvalitet är sund sekvensering, inte ett fynd. */
+    if (st && st.sport === "strength" && isQuality(q) &&
+        (slotClock(plan, st) ?? 0) < (slotClock(plan, q) ?? 0)) {
       lvl3.push({ rule: "heavy-legs", level: 3, session: q.id, action: "warn",
-        why: `Tunga ben: styrkan ${sname(st)} ligger inom ett dygn från ${sname(q)} — överväg ordningsbyte.`,
+        why: `Tunga ben: styrkan ${sname(st)} ligger inom ett dygn före ${sname(q)} — överväg ordningsbyte.`,
         payload: {}, orig: {}, t: now, pair: [st.id, q.id] });
     }
   }
@@ -1422,4 +1425,52 @@ export function activateMode(overlay, rule, { from, to = null } = {}, now = "") 
   (ov.modes.log ??= []).push({ rule: "mode-on", session: null, action: "activate",
     why: `${LIFE_MODES[rule].label} aktiverat från ${from}${to ? ` till ${to}` : ""}.`, t: now });
   return { overlay: ov, key };
+}
+
+
+/* ================================================================
+   MÅNADSVYN (0.9.2, designspråk §7) — ren kalenderfunktion
+   ================================================================ */
+export const MONTHNAMES = ["Januari","Februari","Mars","April","Maj","Juni",
+  "Juli","Augusti","September","Oktober","November","December"];
+
+/* Vilka månader planen spänner över, i ordning: ["2026-08", …] */
+export function planMonths(plan) {
+  const out = new Set();
+  for (const wk of planWeeks(plan))
+    for (let d = 0; d < 7; d++) {
+      const iso = sessionDate(plan, { week: wk, day: d });
+      if (iso) out.add(iso.slice(0, 7));
+    }
+  return [...out].sort();
+}
+
+/* (plan, overlay, "YYYY-MM") → { ym, label, rows:[{week, days:[{date, inMonth, at, dots}]}] }
+   Måndagsstartade rader; dots = { sport, done } per icke-struket pass. */
+export function monthView(plan, overlay, ym) {
+  const [Y, M] = ym.split("-").map(Number);
+  const first = new Date(Date.UTC(Y, M - 1, 1));
+  const lead = (first.getUTCDay() + 6) % 7;
+  const start = new Date(first); start.setUTCDate(1 - lead);
+  const cache = new Map();
+  const rows = [];
+  for (let r = 0; r < 6; r++) {
+    const days = []; let weekNo = null;
+    for (let c = 0; c < 7; c++) {
+      const d = new Date(start); d.setUTCDate(start.getUTCDate() + r * 7 + c);
+      const iso = d.toISOString().slice(0, 10);
+      const at = planDayOf(plan, iso);
+      let dots = [];
+      if (at) {
+        if (!cache.has(at.week)) cache.set(at.week, weekView(plan, overlay, at.week));
+        dots = cache.get(at.week).days[at.day].sessions
+          .filter(s => s.status !== "struck")
+          .map(s => ({ sport: s.sport, done: s.status === "done" }));
+        weekNo ??= at.week;
+      }
+      days.push({ date: iso, inMonth: d.getUTCMonth() === M - 1, at, dots });
+    }
+    if (days.some(x => x.inMonth)) rows.push({ week: weekNo, days });
+  }
+  return { ym, label: `${MONTHNAMES[M - 1]} ${Y}`, rows };
 }

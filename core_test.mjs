@@ -301,7 +301,8 @@ const synth = { formatVersion:1, planVersion:"2026-07-31.1", blocks:[{id:"x",sta
 { const p = structuredClone(synth);
   p.sessions[1] = {id:"st", week:42, day:3, slot:"Morgon", sport:"strength", prio:"B", durationMin:40, profile:[[1,40]]};
   const r = applyRules(p, {}, B, [], NOW);
-  eq(A(r,"heavy-legs","warn").length, 1, "tunga ben: båda riktningar — styrka dagen efter kvalitet"); }
+  eq(A(r,"heavy-legs","warn").length, 0,
+     "REVIDERAD 2026-08-04: styrka dagen EFTER kvalitet ⇒ tyst — regeln skyddar kvalitetspasset, inte styrkan"); }
 
 /* ---------- Nivå 3: quality-spacing + flaggmerge ---------- */
 { const p = structuredClone(synth);
@@ -1050,10 +1051,48 @@ import { ENGINE_FIELDS, athleteGuard, activateMode, LIFE_MODES } from "./core.js
   ok(r.why.includes("swim 1"), "paritetsvarningen pekar ut grenen — man vet var man ska leta");
   ok(r.why.includes("PULS"), "…och att det är pulszoner som avses, inte pace"); }
 
+/* ================================================================
+   0.9.2 — HEAVY-LEGS ENKELRIKTAD · MÅNADSVYN
+   ================================================================ */
+import { monthView, planMonths, MONTHNAMES } from "./core.js";
+
+/* ---------- Riktningen (spec 1 §6 rev 2026-08-04) ---------- */
+{ const r = applyRules(plan, {}, {}, [], NOW);
+  const hl = r.actions.filter(a => a.rule === "heavy-legs");
+  ok(hl.length === 1 && hl[0].pair.includes("sk-w42-str-core") && hl[0].pair.includes("sk-w42-run-thr"),
+     "styrka (ons) före kvalitet (tors) ⇒ varning — kvalitetspasset skyddas");
+  ok(hl[0].why.includes("före"), "texten säger riktningen");
+  /* kvalitet FÖRE styrka: flytta styrkan till dagen efter tröskeln — ingen varning */
+  const moved = manualAdjust(plan, {}, "sk-w42-str-core", "move", { day: 4 }, NOW).overlay;
+  const r2 = applyRules(plan, moved, {}, [], NOW);
+  ok(!r2.actions.some(a => a.rule === "heavy-legs"),
+     "styrka dagen EFTER kvalitet ⇒ tyst — sund sekvensering, inte ett fynd (produktägarbeslut)"); }
+
+/* ---------- Månadsvyn ---------- */
+{ eq(planMonths(plan), ["2026-10", "2026-11"], "planens månader — v44 når in i november");
+  const m = monthView(plan, {}, "2026-10");
+  eq(m.label, "Oktober 2026", "månadsetiketten");
+  const w42 = m.rows.find(r => r.week === 42);
+  ok(w42, "veckonummerkolumnen bär planveckorna");
+  const thu = w42.days.find(d => d.date === "2026-10-15");
+  ok(thu.inMonth && thu.at.day === 3, "cellen vet sin plandag");
+  eq(thu.dots.map(d => d.sport), ["run"], "grenprick för torsdagens pass");
+  const ov = applyMatchLinks({}, [{ sessionId: "sk-w42-run-thr", activityId: 7, score: 90 }], "auto", NOW);
+  ok(monthView(plan, ov, "2026-10").rows.find(r => r.week === 42)
+       .days.find(d => d.date === "2026-10-15").dots[0].done,
+     "utförd prick är fylld — samma härledning som veckostrippen");
+  const out = m.rows[0].days.find(d => !d.at);
+  ok(out && out.dots.length === 0, "dag utanför planen bär inga prickar");
+  const struck = manualAdjust(plan, {}, "sk-w42-run-thr", "strike", {}, NOW).overlay;
+  eq(monthView(plan, struck, "2026-10").rows.find(r => r.week === 42)
+       .days.find(d => d.date === "2026-10-15").dots.length, 0,
+     "struket pass syns inte i månaden");
+  eq(MONTHNAMES.length, 12, "tolv månader, svenska"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 262;
+const EXPECTED_MIN = 356;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
