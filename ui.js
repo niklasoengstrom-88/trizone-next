@@ -12,7 +12,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.9.3 · 2026-08-04";
+export const UI_BUILD = "next-0.9.4 · 2026-08-04";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -90,7 +90,7 @@ function sessionCard(s) {
 }
 
 /* ---------- Vyväxling (0.7.0): Plan · Logg · Inställningar ---------- */
-const NAV = [["idag", "Idag"], ["plan", "Plan"], ["installningar", "Inställningar"]];
+const NAV = [["idag", "Idag"], ["plan", "Plan"]];
 function render() {
   const h = [];
   if (S.view === "idag") renderIdag(h);
@@ -206,7 +206,11 @@ function renderIdag(h) {
     const v = weekView(S.plan, S.overlay, sel.week);
     const d = v.days[sel.day];
     h.push(`<header class="viewhead"><h1>${WEEKDAY[sel.day]}</h1>
-      <span class="sub">${shortDate(d.date)} · v.${sel.week}</span></header>`);
+      <span class="sub">${shortDate(d.date)} · v.${sel.week}</span>
+      <span class="hicons">
+        <button class="hicon" data-nav="plan" aria-label="Till planen">${ICO.cal}</button>
+        <button class="hicon" data-nav="installningar" aria-label="Till inställningar">${ICO.user}</button>
+      </span></header>`);
     calZone(h, sel.week, d.date);
     const live = d.sessions.filter(s => s.status !== "struck");
     if (live.length) h.push(`<div class="dsessions herolist">${live.map(s => sessionCard(s)).join("")}</div>`);
@@ -262,6 +266,11 @@ function renderIdag(h) {
 /* ---------- Plan: löpande veckolista (beslut B) ---------- */
 function renderPlan(h) {
   const weeks = planWeeks(S.plan);
+
+  h.push(`<header class="viewhead"><h1>Planen</h1>
+    <span class="hicons">
+      <button class="hicon" data-nav="installningar" aria-label="Till inställningar">${ICO.user}</button>
+    </span></header>`);
 
   h.push(`<section class="modes"><div class="eyebrow">Läget</div>
     <div class="chiprow">${Object.entries(LIFE_MODES).map(([rule, m]) => {
@@ -771,11 +780,8 @@ function wire() {
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
     if (t.dataset.mprev != null || t.dataset.mnext != null) {
-      const months = planMonths(S.plan);
-      const i = months.indexOf(S.monthYM);
-      S.monthYM = months[Math.max(0, Math.min(months.length - 1, i + (t.dataset.mnext != null ? 1 : -1)))];
-      render(); return;
-    }
+      goMonth(t.dataset.mnext != null ? 1 : -1);
+      render(); return; }
     if (t.dataset.evlog != null) { S.evOpen = !S.evOpen; render(); return; }
     if (t.dataset.histopen) { S.histOpen = t.dataset.histopen; render(); return; }
     if (t.dataset.histclose != null) { S.histOpen = null; render(); return; }
@@ -972,6 +978,31 @@ function importRaw(raw) {
 
 /* Gardinen (0.9.3): handtaget är den enda dragytan — passkorten under behåller
    sin långtrycksgest orörd. Reducern är ren; här bor bara DOM-kopplingen. */
+function goMonth(delta) {
+  const months = planMonths(S.plan);
+  const i = months.indexOf(S.monthYM);
+  S.monthYM = months[Math.max(0, Math.min(months.length - 1, i + delta))];
+}
+
+/* Månadssvep (0.9.4): horisontellt inom månadsytan bläddrar. Slopkrav mot
+   vertikal skroll; dagcellernas tryck överlever (rörelse dödar klicket). */
+function wireMonthSwipe(root) {
+  let x0 = null, y0 = null;
+  root.addEventListener("pointerdown", (ev) => {
+    const z = ev.target.closest?.(".mwrap");
+    x0 = z ? ev.clientX : null; y0 = z ? ev.clientY : null;
+  });
+  root.addEventListener("pointerup", (ev) => {
+    if (x0 == null) return;
+    const dx = ev.clientX - x0, dy = ev.clientY - y0;
+    x0 = null; y0 = null;
+    if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    goMonth(dx < 0 ? 1 : -1);
+    buzz(HAPTIC.day);
+    render();
+  });
+}
+
 let CU = { ...curtainIdle }, cuTicked = false;
 const cuEls = () => ({ cur: document.getElementById("curtain"),
                        strip: app().querySelector?.(".stripwrap"),
@@ -1097,6 +1128,7 @@ async function boot() {
   if (!S.plan) { S.view = "installningar"; render(); return; }   /* felläget landar där pariteten bor */
   wire();
   wireCurtain(app());
+  wireMonthSwipe(app());
   render();
   document.getElementById("wk-" + S.week)?.scrollIntoView();
 }

@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.9.3 · 2026-08-04
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.9.4 · 2026-08-04
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.9.3 · 2026-08-04" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.9.4 · 2026-08-04" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -91,6 +91,7 @@ has(els.app.innerHTML, 'class="sdot full"', "utfört pass = fylld grenprick");
 { clickBtn({ selday: "42|5" });
   has(els.app.innerHTML, "Lördag", "bläddring: vald dag tar hjältepositionen");
   has(els.app.innerHTML, "Tillbaka till idag", "återvägen finns alltid");
+  has(els.app.innerHTML, "hicon", "genvägsikonerna följer med i bläddringsläget (0.9.4-buggen)");
   clickBtn({ backtoday: "" });
   has(els.app.innerHTML, "Klart för idag", "tillbaka till idag återställer hjälten"); }
 { clickBtn({ selday: "42|0" });
@@ -124,6 +125,17 @@ has(els.app.innerHTML, 'data-nav="plan" aria-label="Till planen"', "kalenderikon
   fire("pointerup",   { target: grab, clientX: 60, clientY: 260, t: Date.now() });
   await new Promise(r => setTimeout(r, 350));
   has(els.app.innerHTML, 'class="curtain open"', "drag över tröskeln öppnar gardinen");
+  /* månadssvep: horisontellt bläddrar, med haptisk kvittens */
+  { const zone = { closest: sel => sel.includes(".mwrap") ? {} : null };
+    fire("pointerdown", { target: zone, clientX: 300, clientY: 200 });
+    fire("pointerup",   { target: zone, clientX: 160, clientY: 210 });
+    has(els.app.innerHTML, "November 2026", "svep vänster bläddrar till nästa månad");
+    fire("pointerdown", { target: zone, clientX: 100, clientY: 200 });
+    fire("pointerup",   { target: zone, clientX: 260, clientY: 205 });
+    has(els.app.innerHTML, "Oktober 2026", "svep höger bläddrar tillbaka");
+    fire("pointerdown", { target: zone, clientX: 100, clientY: 100 });
+    fire("pointerup",   { target: zone, clientX: 170, clientY: 260 });
+    has(els.app.innerHTML, "Oktober 2026", "diagonalt svep bläddrar INTE — sloppkravet håller"); }
   fire("pointerdown", { target: grab, clientX: 60, clientY: 300 });
   fire("pointermove", { target: grab, clientX: 60, clientY: 80 });
   fire("pointerup",   { target: grab, clientX: 60, clientY: 80, t: Date.now() });
@@ -253,11 +265,18 @@ has(els.app.innerHTML, "aldrig blockgränser", "strukturskyddet står i klartext
 
 /* ---------- Skalet (0.7.0): flikar och vyer ---------- */
 has(els.app.innerHTML, 'data-nav="plan"', "fliken Plan finns");
+ok(!/class="tab[^"]*" data-nav="installningar"/.test(els.app.innerHTML),
+   "Inställningar är inte längre en flik — personikonen är vägen (0.9.4)");
+{ clickBtn({ nav: "plan" });
+  has(els.app.innerHTML, ">Planen<", "Plan-vyn har ett huvud");
+  has(els.app.innerHTML, 'data-nav="installningar" aria-label="Till inställningar"',
+      "personikonen finns även i Planen — Inställningar nås alltid");
+  clickBtn({ nav: "idag" }); }
 ok(!els.app.innerHTML.includes('data-nav="logg"'), "Logg-fliken är borttagen (beslut 0.9.1)");
 has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
 
 clickBtn({ nav: "installningar" });
-has(els.app.innerHTML, "next-0.9.3", "byggstämpeln bor i Inställningar (T2)");
+has(els.app.innerHTML, "next-0.9.4", "byggstämpeln bor i Inställningar (T2)");
 has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
 ok(!els.app.innerHTML.includes("Livsschema"), "livsschema-editorn är borttagen (beslut 0.9.1)");
 has(els.app.innerHTML, "data-evlog", "händelseloggen nås via knapp i Inställningar");
