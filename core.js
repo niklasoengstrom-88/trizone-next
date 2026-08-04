@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.9.2 · 2026-08-04";
+export const BUILD = "next-0.9.3 · 2026-08-04";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -1473,4 +1473,44 @@ export function monthView(plan, overlay, ym) {
     if (days.some(x => x.inMonth)) rows.push({ week: weekNo, days });
   }
   return { ym, label: `${MONTHNAMES[M - 1]} ${Y}`, rows };
+}
+
+
+/* ================================================================
+   GARDINEN (0.9.3) — månadsvyn följer fingret
+   Ren tillståndsmaskin, samma mönster som dragReduce. UI:t mappar
+   progress 0–1 till höjd; reducern vet inget om pixlar utom spannet.
+   ================================================================ */
+
+export const CURTAIN = { range: 260, tapMax: 6, flickVel: 0.5, commitAt: 0.4 };
+export const curtainIdle = { phase: "idle", y0: 0, t0: 0, open: false, progress: 0, commit: null };
+
+export function curtainReduce(c, ev) {
+  switch (ev.type) {
+    case "down":
+      return { phase: "drag", y0: ev.y, t0: ev.t ?? 0, open: !!ev.open,
+               progress: ev.open ? 1 : 0, commit: null, moved: false };
+    case "move": {
+      if (c.phase !== "drag") return c;
+      const dy = ev.y - c.y0;
+      const raw = c.open ? 1 + dy / CURTAIN.range : dy / CURTAIN.range;
+      return { ...c, moved: c.moved || Math.abs(dy) > CURTAIN.tapMax,
+               progress: Math.max(0, Math.min(1, raw)), lastY: ev.y, lastT: ev.t ?? c.t0 };
+    }
+    case "up": {
+      if (c.phase !== "drag") return { ...curtainIdle };
+      const dy = (ev.y ?? c.lastY ?? c.y0) - c.y0;
+      const dt = Math.max(1, (ev.t ?? c.lastT ?? c.t0) - c.t0);
+      if (!c.moved && Math.abs(dy) <= CURTAIN.tapMax)
+        return { ...curtainIdle, commit: c.open ? "close" : "open", tap: true };   /* tryck togglar (§9) */
+      const vel = dy / dt;                                    /* px/ms, tecken = riktning */
+      if (Math.abs(vel) >= CURTAIN.flickVel)
+        return { ...curtainIdle, commit: vel > 0 ? "open" : "close" };
+      return { ...curtainIdle, commit: c.progress >= CURTAIN.commitAt ? "open" : "close" };
+    }
+    case "cancel":
+      return { ...curtainIdle, commit: c.phase === "drag" ? (c.open ? "open" : "close") : null };
+    default:
+      return c;
+  }
 }

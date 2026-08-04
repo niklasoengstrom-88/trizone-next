@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.9.2 · 2026-08-04
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.9.3 · 2026-08-04
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.9.2 · 2026-08-04" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.9.3 · 2026-08-04" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -97,28 +97,39 @@ has(els.app.innerHTML, 'class="sdot full"', "utfört pass = fylld grenprick");
   has(els.app.innerHTML, "Ingen träning planerad", "dag utan pass i bläddring ⇒ vila");
   clickBtn({ backtoday: "" }); }
 
-/* ---------- Månadsvyn (0.9.2) ---------- */
-has(els.app.innerHTML, "data-monthtoggle", "strippen bär en väg till månaden");
-{ clickBtn({ monthtoggle: "" });
-  has(els.app.innerHTML, "Oktober 2026", "månaden vecklas ut med namn (displaysnitt)");
+/* ---------- Gardinen (0.9.3) ---------- */
+has(els.app.innerHTML, "data-chandle", "handtaget finns — en tydlig yta att ta tag i");
+has(els.app.innerHTML, 'class="curtain"', "gardinen är stängd vid start");
+has(els.app.innerHTML, "hicon", "genvägsikonerna finns i Idag-huvudet");
+has(els.app.innerHTML, 'data-nav="plan" aria-label="Till planen"', "kalenderikonen går till Planen");
+{ clickBtn({ chandle: "" });                       /* tryck togglar — gesten är aldrig enda vägen */
+  await new Promise(r => setTimeout(r, 350));
+  has(els.app.innerHTML, 'class="curtain open"', "tryck på handtaget öppnar gardinen");
+  has(els.app.innerHTML, "Oktober 2026", "månaden med namn (displaysnitt)");
   has(els.app.innerHTML, 'class="mwk">42', "veckonummerkolumnen finns");
-  has(els.app.innerHTML, "data-mnext", "månaden är bläddringsbar");
-  ok(!els.app.innerHTML.includes("strip7"), "månaden ERSÄTTER strippen (§7), staplas inte");
+  has(els.app.innerHTML, "stripwrap closed", "strippen kollapsar när månaden är ute (§7)");
   clickBtn({ mnext: "" });
   has(els.app.innerHTML, "November 2026", "bläddring till nästa månad");
   clickBtn({ mprev: "" });
   clickBtn({ selday: "42|5" });
   has(els.app.innerHTML, "Lördag", "dagcell i månaden öppnar bläddringsläget");
   clickBtn({ backtoday: "" });
-  clickBtn({ monthtoggle: "" });
-  has(els.app.innerHTML, "strip7", "ihopfälld månad ger strippen tillbaka"); }
-{ /* swipen: ned på strippen ⇒ månad, upp ⇒ strip */
-  fire("pointerdown", { target: { closest: sel => sel.includes(".strip7") ? {} : null }, clientX: 60, clientY: 100 });
-  fire("pointerup",   { target: { closest: () => null }, clientX: 60, clientY: 170 });
-  has(els.app.innerHTML, "Oktober 2026", "svep nedåt på strippen öppnar månaden");
-  fire("pointerdown", { target: { closest: sel => sel.includes(".mwrap") ? {} : null }, clientX: 60, clientY: 200 });
-  fire("pointerup",   { target: { closest: () => null }, clientX: 60, clientY: 120 });
-  has(els.app.innerHTML, "strip7", "svep uppåt på månaden fäller ihop den"); }
+  clickBtn({ chandle: "" });
+  await new Promise(r => setTimeout(r, 350));
+  has(els.app.innerHTML, "stripwrap", "ihopfälld gardin ger strippen tillbaka"); }
+{ /* draggesten via handtaget: reducern styr, tröskeln avgör */
+  const grab = { closest: sel => sel.includes("data-chandle") ? { dataset: { chandle: "" } } : null };
+  fire("pointerdown", { target: grab, clientX: 60, clientY: 100 });
+  fire("pointermove", { target: grab, clientX: 60, clientY: 260 });
+  fire("pointerup",   { target: grab, clientX: 60, clientY: 260, t: Date.now() });
+  await new Promise(r => setTimeout(r, 350));
+  has(els.app.innerHTML, 'class="curtain open"', "drag över tröskeln öppnar gardinen");
+  fire("pointerdown", { target: grab, clientX: 60, clientY: 300 });
+  fire("pointermove", { target: grab, clientX: 60, clientY: 80 });
+  fire("pointerup",   { target: grab, clientX: 60, clientY: 80, t: Date.now() });
+  await new Promise(r => setTimeout(r, 350));
+  has(els.app.innerHTML, "stripwrap", "drag uppåt stänger — rullgardin åt båda håll");
+  ok(vibes.length > 0, "gardinen kvitterar med haptik"); }
 
 /* ---------- Manuell loggning (0.8.0) ---------- */
 clickBtn({ nav: "plan" });
@@ -246,7 +257,7 @@ ok(!els.app.innerHTML.includes('data-nav="logg"'), "Logg-fliken är borttagen (b
 has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
 
 clickBtn({ nav: "installningar" });
-has(els.app.innerHTML, "next-0.9.2", "byggstämpeln bor i Inställningar (T2)");
+has(els.app.innerHTML, "next-0.9.3", "byggstämpeln bor i Inställningar (T2)");
 has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
 ok(!els.app.innerHTML.includes("Livsschema"), "livsschema-editorn är borttagen (beslut 0.9.1)");
 has(els.app.innerHTML, "data-evlog", "händelseloggen nås via knapp i Inställningar");

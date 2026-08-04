@@ -1089,10 +1089,40 @@ import { monthView, planMonths, MONTHNAMES } from "./core.js";
      "struket pass syns inte i månaden");
   eq(MONTHNAMES.length, 12, "tolv månader, svenska"); }
 
+/* ---------- Gardinen (0.9.3): curtainReduce ---------- */
+import { curtainReduce, curtainIdle, CURTAIN } from "./core.js";
+const cseq = (...evs) => evs.reduce(curtainReduce, curtainIdle);
+
+{ eq(cseq({ type:"down", y:100, t:0, open:false }, { type:"up", y:103, t:120 }).commit, "open",
+     "kort tryck på handtaget togglar — gesten är aldrig enda vägen (§9)");
+  eq(cseq({ type:"down", y:100, t:0, open:true }, { type:"up", y:101, t:100 }).commit, "close",
+     "tryck när öppen ⇒ stänger"); }
+{ const c = cseq({ type:"down", y:100, t:0, open:false }, { type:"move", y:250, t:400 });
+  ok(Math.abs(c.progress - 150/CURTAIN.range) < 1e-9, "progress följer fingret linjärt");
+  eq(cseq({ type:"down", y:100, t:0, open:false }, { type:"move", y:900, t:400 }).progress, 1,
+     "progress klipps vid 1 — gardinen överdras aldrig"); }
+{ eq(cseq({ type:"down", y:100, t:0, open:false }, { type:"move", y:220, t:500 },
+          { type:"up", y:220, t:500 }).commit, "open",
+     "släpp över tröskeln (0,4) ⇒ öppnas");
+  eq(cseq({ type:"down", y:100, t:0, open:false }, { type:"move", y:150, t:500 },
+          { type:"up", y:150, t:500 }).commit, "close",
+     "släpp under tröskeln ⇒ faller tillbaka — aldrig ett mellanläge"); }
+{ eq(cseq({ type:"down", y:100, t:0, open:false }, { type:"move", y:180, t:80 },
+          { type:"up", y:180, t:80 }).commit, "open",
+     "snabb flick öppnar trots kort sträcka");
+  eq(cseq({ type:"down", y:400, t:0, open:true }, { type:"move", y:330, t:80 },
+          { type:"up", y:330, t:80 }).commit, "close",
+     "flick uppåt stänger den öppna gardinen"); }
+{ const c = cseq({ type:"down", y:400, t:0, open:true }, { type:"move", y:340, t:300 });
+  ok(Math.abs(c.progress - (1 - 60/CURTAIN.range)) < 1e-9, "öppen gardin: drag uppåt minskar progress");
+  eq(cseq({ type:"down", y:400, t:0, open:true }, { type:"move", y:340, t:300 },
+          { type:"cancel" }).commit, "open",
+     "avbrott återgår till utgångsläget — gardinen tappas aldrig halvvägs"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 356;
+const EXPECTED_MIN = 366;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

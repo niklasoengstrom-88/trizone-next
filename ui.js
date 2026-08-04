@@ -5,14 +5,14 @@
 import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          manualAdjust, shortDate, DAYLABEL, WINDOWS, SPORTS, DEFAULT_CFG, resolveOrphan,
          todayView, planDayOf, effectiveRpe, logResult, unlogResult, FEEL_LABEL, sessionDate,
-         monthView, planMonths,
+         monthView, planMonths, curtainReduce, curtainIdle,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
          readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
          actZoneMinutes, matchDate, backupExport, backupImport, zoneParity,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.9.2 · 2026-08-04";
+export const UI_BUILD = "next-0.9.3 · 2026-08-04";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -111,6 +111,10 @@ function render() {
 }
 
 /* ---------- Idag: tillståndsberoende hjälte + veckostrip (§6, L4) ---------- */
+const ICO = {
+  cal: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.5h17M8 3v3.5M16 3v3.5"/><circle cx="8.6" cy="13.6" r=".9" fill="currentColor" stroke="none"/><circle cx="12" cy="13.6" r=".9" fill="currentColor" stroke="none"/></svg>`,
+  user: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.2" r="3.4"/><path d="M4.8 20c1.3-3.4 4-5 7.2-5s5.9 1.6 7.2 5"/></svg>`
+};
 const WEEKDAY = ["Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag","Söndag"];
 
 function rpeRow(s) {
@@ -167,12 +171,21 @@ function monthPanel(h, selDate) {
           : `<span class="mcell${cls}"><span class="mdd">${Number(d.date.slice(8))}</span></span>`;
       }).join("")).join("")}
     </div>
-    <button class="mtoggle" data-monthtoggle aria-label="Fäll ihop månaden">▴</button>
   </div>`);
 }
 
-function strip7(h, wk, selDate) {
-  if (S.monthOpen) { monthPanel(h, selDate); return; }   /* månaden ersätter strippen (§7) */
+function calZone(h, wk, selDate) {
+  h.push(`<div class="calzone">`);
+  h.push(`<div class="stripwrap${S.monthOpen ? " closed" : ""}">`);
+  stripGrid(h, wk, selDate);
+  h.push(`</div><div class="curtain${S.monthOpen ? " open" : ""}" id="curtain">`);
+  monthPanel(h, selDate);
+  h.push(`</div><button class="chandle" data-chandle
+    aria-label="${S.monthOpen ? "Fäll ihop månaden" : "Dra ned månaden"}"
+    aria-expanded="${S.monthOpen}"><i></i></button></div>`);
+}
+
+function stripGrid(h, wk, selDate) {
   const v = weekView(S.plan, S.overlay, wk);
   h.push(`<div class="strip7">` + v.days.map(d => {
     const dots = d.sessions.filter(s => s.status !== "struck").map(s =>
@@ -181,8 +194,7 @@ function strip7(h, wk, selDate) {
     return `<button class="scell${cls}" data-selday="${wk}|${d.day}">
       <span class="sdl">${d.label}</span><span class="sdd">${Number(d.date.slice(8))}</span>
       <span class="sdots">${dots}</span></button>`;
-  }).join("") + `</div>
-  <button class="mtoggle" data-monthtoggle aria-label="Visa månaden">▾</button>`);
+  }).join("") + `</div>`);
 }
 
 function renderIdag(h) {
@@ -195,7 +207,7 @@ function renderIdag(h) {
     const d = v.days[sel.day];
     h.push(`<header class="viewhead"><h1>${WEEKDAY[sel.day]}</h1>
       <span class="sub">${shortDate(d.date)} · v.${sel.week}</span></header>`);
-    strip7(h, sel.week, d.date);
+    calZone(h, sel.week, d.date);
     const live = d.sessions.filter(s => s.status !== "struck");
     if (live.length) h.push(`<div class="dsessions herolist">${live.map(s => sessionCard(s)).join("")}</div>`);
     else h.push(`<section class="restcard"><div class="eyebrow">Vila</div>
@@ -205,10 +217,14 @@ function renderIdag(h) {
   }
 
   h.push(`<header class="viewhead"><h1>Idag</h1>
-    <span class="sub">${WEEKDAY[new Date(tISO + "T12:00:00Z").getUTCDay() === 0 ? 6 : new Date(tISO + "T12:00:00Z").getUTCDay() - 1]} ${shortDate(tISO)}</span></header>`);
+    <span class="sub">${WEEKDAY[new Date(tISO + "T12:00:00Z").getUTCDay() === 0 ? 6 : new Date(tISO + "T12:00:00Z").getUTCDay() - 1]} ${shortDate(tISO)}</span>
+    <span class="hicons">
+      <button class="hicon" data-nav="plan" aria-label="Till planen">${ICO.cal}</button>
+      <button class="hicon" data-nav="installningar" aria-label="Till inställningar">${ICO.user}</button>
+    </span></header>`);
 
   const t = todayView(S.plan, S.overlay, tISO);
-  if (t.at) strip7(h, t.at.week, null);
+  if (t.at) calZone(h, t.at.week, null);
 
   const active = S.overlay?.modes?.active ?? [];
   if (active.length) h.push(`<section class="modebar">${active.map(m =>
@@ -750,10 +766,10 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-monthtoggle],[data-mprev],[data-mnext]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext]");
     if (!t) return;
     S.note = null;
-    if (t.dataset.monthtoggle != null) { S.monthOpen = !S.monthOpen; render(); return; }
+    if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
     if (t.dataset.mprev != null || t.dataset.mnext != null) {
       const months = planMonths(S.plan);
       const i = months.indexOf(S.monthYM);
@@ -954,21 +970,52 @@ function importRaw(raw) {
   recomputeMatches(); render();
 }
 
-/* Swipe på strippen (produktägarens beställning): ned ⇒ månad, upp ⇒ strip.
-   Ren y-delta på pekare; ett tryck förblir ett tryck (selday-klicket rör sig inte). */
-function wireStripSwipe(root) {
-  let y0 = null, inZone = false;
+/* Gardinen (0.9.3): handtaget är den enda dragytan — passkorten under behåller
+   sin långtrycksgest orörd. Reducern är ren; här bor bara DOM-kopplingen. */
+let CU = { ...curtainIdle }, cuTicked = false;
+const cuEls = () => ({ cur: document.getElementById("curtain"),
+                       strip: app().querySelector?.(".stripwrap"),
+                       zone: app().querySelector?.(".calzone") });
+function cuApply(p) {
+  const { cur, strip, zone } = cuEls();
+  if (!cur?.style) return;
+  const hMax = Math.min(460, cur.scrollHeight || 380), sMax = strip?.scrollHeight || 64;
+  zone?.classList?.add("dragging");
+  cur.style.maxHeight = Math.round(p * hMax) + "px";
+  if (strip?.style) { strip.style.maxHeight = Math.round((1 - p) * sMax) + "px";
+                      strip.style.opacity = String(1 - p); }
+  if (!cuTicked && p >= 0.4) { cuTicked = true; buzz(HAPTIC.day); }     /* gardinen fastnar här */
+  if (cuTicked && p < 0.4) cuTicked = false;
+}
+function cuCommit(open) {
+  const { cur, strip, zone } = cuEls();
+  S.monthOpen = open;
+  zone?.classList?.remove("dragging");
+  if (cur?.style) { cur.style.maxHeight = ""; cur.classList?.[open ? "add" : "remove"]("open"); }
+  if (strip?.style) { strip.style.maxHeight = ""; strip.style.opacity = "";
+                      strip.classList?.[open ? "add" : "remove"]("closed"); }
+  buzz(HAPTIC.day);
+  setTimeout(render, 320);                        /* normalisera efter övergången */
+}
+function wireCurtain(root) {
   root.addEventListener("pointerdown", (ev) => {
-    inZone = !!ev.target.closest?.(".strip7,.mwrap");
-    y0 = inZone ? ev.clientY : null;
+    if (!ev.target.closest?.("[data-chandle]")) return;
+    CU = curtainReduce(curtainIdle, { type: "down", y: ev.clientY, t: Date.now(), open: S.monthOpen });
+    cuTicked = S.monthOpen;
   });
-  root.addEventListener("pointerup", (ev) => {
-    if (!inZone || y0 == null) return;
-    const dy = ev.clientY - y0;
-    y0 = null; inZone = false;
-    if (dy > 48 && !S.monthOpen) { S.monthOpen = true; render(); }
-    else if (dy < -48 && S.monthOpen) { S.monthOpen = false; render(); }
+  root.addEventListener("pointermove", (ev) => {
+    if (CU.phase !== "drag") return;
+    CU = curtainReduce(CU, { type: "move", y: ev.clientY, t: Date.now() });
+    cuApply(CU.progress);
   });
+  const done = (type) => (ev) => {
+    if (CU.phase !== "drag") return;
+    CU = curtainReduce(CU, { type, y: ev.clientY, t: Date.now() });
+    if (CU.commit) cuCommit(CU.commit === "open");
+    CU = { ...curtainIdle };
+  };
+  root.addEventListener("pointerup", done("up"));
+  root.addEventListener("pointercancel", done("cancel"));
 }
 
 /* ---------- Start ---------- */
@@ -1049,7 +1096,7 @@ async function boot() {
   row("haptik", hapticRow(), hapticLog.api ? "" : "bad");
   if (!S.plan) { S.view = "installningar"; render(); return; }   /* felläget landar där pariteten bor */
   wire();
-  wireStripSwipe(app());
+  wireCurtain(app());
   render();
   document.getElementById("wk-" + S.week)?.scrollIntoView();
 }
