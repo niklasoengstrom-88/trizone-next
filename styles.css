@@ -1,4 +1,4 @@
-/* TRIZONE Next — styles.css · BUILD next-0.10.0 · 2026-08-05
+/* TRIZONE Next — styles.css · BUILD next-0.11.0 · 2026-08-05
    Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
 :root{
   --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
@@ -340,3 +340,41 @@ main{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
 @media (prefers-reduced-motion: reduce){
   .stripwrap,.curtain{transition:none}
 }
+
+/* ---------- Analys · statusgrid (0.11.0) ----------
+   L1: kort är för objekt — dimensionerna ÄR tappbara objekt, alltså kort.
+   L2: djup via ytsteg. Status bärs alltid av form + färg (a11y §9): pricken
+   har egen form per nivå, aldrig färg ensam. */
+.viewhead{flex-wrap:wrap}
+.viewhead .lede{flex-basis:100%;font-family:var(--serif-text);font-size:15px;
+  line-height:1.5;color:var(--mut);margin-top:6px}
+
+.dimgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 16px}
+.dimcard{display:flex;flex-direction:column;gap:7px;text-align:left;min-height:88px;
+  padding:14px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--surface);color:var(--ink);font-family:var(--sans);cursor:pointer;
+  transition:background .16s ease-out,border-color .16s ease-out}
+.dimcard.open{grid-column:1/-1;background:var(--surface-hi);border-color:var(--line)}
+.dimcard.idle{background:var(--surface-lo)}
+.dimcard:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.dimhead{display:flex;align-items:center;gap:8px}
+.dimval{font-size:17px;font-weight:500;letter-spacing:-.01em}
+.dimcard.idle .dimval{color:var(--faint)}
+.dimwhy{font-family:var(--serif-text);font-size:14.5px;line-height:1.55;color:var(--mut);
+  border-top:1px solid var(--line-soft);padding-top:9px;margin-top:2px}
+
+/* Form + färg: cirkel = ok, romb = varning, kvadrat = risk, ring = ingen bedömning */
+.dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:var(--ok)}
+.dot.warn{background:var(--warn);border-radius:2px;transform:rotate(45deg)}
+.dot.risk{background:var(--risk);border-radius:2px}
+.dot.idle{background:transparent;border:1.5px solid var(--faint)}
+
+/* Belastningsstaplar — ett koordinatsystem per axel (v29-lärdomen):
+   höjden är linjär mot veckans minuter, inget normaliseringsgolv. */
+.bars{display:flex;align-items:flex-end;gap:6px;height:132px;margin-top:12px}
+.bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  height:100%;gap:4px}
+.barval{font-size:10px;color:var(--mut);font-variant-numeric:tabular-nums}
+.barcol{width:100%;background:var(--z2);border-radius:4px 4px 0 0;min-height:2px}
+.barlab{font-size:9.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.spark{width:100%;height:76px;margin-top:12px;display:block}

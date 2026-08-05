@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.10.0 · 2026-08-05";
+export const BUILD = "next-0.11.0 · 2026-08-05";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -1832,6 +1832,129 @@ export function wellnessFlags(wellness, todayISO, opts = {}) {
   if (r.trend.flags.rhr || r.trend.flags.hrv)
     out.push({ id: "recovery-watch", source: "derived", why: r.trend.why.join(" · ") });
   return out;
+}
+
+/* ================================================================
+   STATUSGRID (0.11.0) — Analys-vyns fyra dimensioner
+   Demons statusgrid är Nexts arvtagare till v32:s flaggpanel. Rena
+   funktioner: varje siffra går att härleda, ingen skattas.
+   V28-REGELN GÄLLER: ingen procentsiffra utan sitt tidsfönster.
+   ================================================================ */
+
+const mondayOf = (iso) => {                    /* datum → måndagen i dess ISO-vecka */
+  const d = new Date(String(iso).slice(0, 10) + "T00:00:00Z");
+  if (isNaN(d)) return null;
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+};
+
+/* Träningstid per ISO-vecka, nyaste sist. sport=null ⇒ alla grenar. */
+export function weeklyLoad(activities, todayISO, weeks = 8, sport = null) {
+  const thisMon = mondayOf(todayISO);
+  if (!thisMon) return [];
+  const out = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const mon = dayShift(thisMon, -7 * i), sun = dayShift(mon, 6);
+    const mins = (activities ?? []).filter(a => {
+      const d = matchDate(a.start_date_local);
+      if (!d || d < mon || d > sun) return false;
+      return !sport || SPORT_MAP[a.type] === sport;
+    }).reduce((n, a) => n + (Number(a.moving_time) || 0) / 60, 0);
+    out.push({ monday: mon, minutes: Math.round(mins), hours: Math.round(mins / 6) / 10 });
+  }
+  return out;
+}
+
+/* Belastning: innevarande vecka mot rullande 3-veckorssnitt, mot profilens tak. */
+export function loadStatus(activities, todayISO, cfg = {}) {
+  const capPct = cfg.volumeCapPct ?? ENGINE.volumeCapPct;
+  const all = weeklyLoad(activities, todayISO, 8);
+  const run = weeklyLoad(activities, todayISO, 8, "run");
+  if (!all.length || all.every(w => !w.minutes))
+    return { key: "load", label: "Belastning", state: "idle", value: "Ingen data",
+             why: "Inga aktiviteter i fönstret.", weeks: all, has: false };
+  const prev3 = run.slice(-4, -1).map(w => w.minutes);
+  const base = prev3.length ? prev3.reduce((a, b) => a + b, 0) / prev3.length : 0;
+  const now = run[run.length - 1].minutes;
+  const pct = base ? Math.round((now / base) * 100) : null;
+  const hh = m => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, "0")}`;
+  const over = pct != null && pct > capPct;
+  const trend = pct == null ? "" : ` · ${pct >= 100 ? "↗" : "↘"} ${pct - 100 > 0 ? "+" : ""}${pct - 100} %`;
+  return { key: "load", label: "Belastning", state: over ? "warn" : "ok",
+           value: (over ? "Över taket" : "I nivå") + trend, weeks: all, runWeeks: run, pct, capPct,
+           why: base
+             ? `Löpning denna vecka ${hh(now)} h mot 3-veckorssnittet ${hh(Math.round(base))} h. `
+               + (over ? `ÖVER volymtaket (${capPct} %).` : `Under volymtaket (${capPct} %).`)
+             : `Löpning denna vecka ${hh(now)} h. För kort historik för ett 3-veckorssnitt än.`,
+           has: true };
+}
+
+/* Intensitet ur UTFALL (matchning M-U: verkligheten räknas, även oplanerat).
+   Sim utan giltig pulsdata hålls utanför och det redovisas — annars vore
+   siffran en blandning av mätt och ogiltigt. */
+export function intensityStatus(activities, todayISO, cfg = {}, days = 28) {
+  const target = cfg.lowShareTarget ?? ENGINE.lowShareTarget ?? 0.78;
+  const from = dayShift(todayISO, -days);
+  const swimOK = !!cfg.swimHrValid;
+  let z = [0, 0, 0, 0, 0], skippedSwim = 0, used = 0;
+  for (const a of activities ?? []) {
+    const d = matchDate(a.start_date_local);
+    if (!d || d < from || d > todayISO) continue;
+    const zt = a.icu_hr_zone_times;
+    if (!Array.isArray(zt) || !zt.length) continue;
+    if (SPORT_MAP[a.type] === "swim" && !swimOK) { skippedSwim++; continue; }
+    for (let i = 0; i < 5 && i < zt.length; i++) z[i] += (Number(zt[i]) || 0) / 60;
+    used++;
+  }
+  const total = z.reduce((a, b) => a + b, 0);
+  if (!total)
+    return { key: "intensity", label: "Intensitet", state: "idle", value: "Ingen zondata",
+             why: `Inga aktiviteter med pulszoner de senaste ${days} dagarna.`, has: false, zones: z };
+  const share = (z[0] + z[1]) / total;
+  const low = Math.round(share * 100);
+  return { key: "intensity", label: "Intensitet", state: share >= target ? "ok" : "warn",
+           value: `${low} % lågintensivt`, zones: z, share, target, window: days, used,
+           why: `${low} % av ${Math.round(total)} zonminuter de senaste ${days} dagarna låg i Z1–Z2. `
+              + `Mål ${Math.round(target * 100)} %.`
+              + (skippedSwim ? ` ${skippedSwim} simpass utanför — optisk puls i vatten är inte mätdata.` : ""),
+           has: true };
+}
+
+/* Dagsform: recovery()-signalerna, tolkade. */
+export function formStatus(recov) {
+  if (!recov?.has)
+    return { key: "form", label: "Dagsform", state: "idle", value: "Ingen data",
+             why: "Ingen wellnessdata hämtad än.", has: false };
+  const d = recov.day, t = recov.trend;
+  const dayOff = !!(d.flags.rhr || d.flags.sleep);
+  const trendOff = !!(t.flags.rhr || t.flags.hrv);
+  const parts = [];
+  if (d.rhr != null) parts.push(`Vilopuls i morse ${d.rhr} mot normalen ${d.rhrBase}`);
+  if (d.sleepH != null) parts.push(`sömn ${d.sleepH} h mot normalen ${d.sleepBase} h`);
+  if (t.hrv != null) parts.push(`HRV ${t.hrv} ms mot baslinjen ${t.hrvBase} ms`);
+  const tail = dayOff ? " Motorn föreslår nedväxling av dagens kvalitetspass — du bestämmer."
+             : trendOff ? " Trenden avviker: volym går bra, spara kvaliteten tills den vänder."
+             : " Allt inom din egen baslinje.";
+  return { key: "form", label: "Dagsform",
+           state: dayOff ? "warn" : trendOff ? "warn" : "ok",
+           value: dayOff ? "Avvikande" : trendOff ? "Trend att bevaka" : "Normal",
+           why: parts.join(" · ") + "." + tail, has: true, dayOff, trendOff };
+}
+
+/* Skaderisk: ingen bedömning görs förrän regelmotorn är kopplad i UI (fas 4).
+   Kortet finns för layoutens skull men bär INTE statusfärg — en grön prick
+   utan bedömning bakom vore ett påstående appen inte kan stå för. */
+export function injuryStatus() {
+  return { key: "injury", label: "Skaderisk", state: "idle", value: "Inte kopplad än",
+           why: "Bindningar och aktiva regler visas här när regelmotorn får sitt gränssnitt. "
+              + "Tills dess görs ingen bedömning — och då visas ingen.", has: false };
+}
+
+export function statusGrid(activities, recov, todayISO, cfg = {}) {
+  return [loadStatus(activities, todayISO, cfg),
+          intensityStatus(activities, todayISO, cfg),
+          formStatus(recov),
+          injuryStatus()];
 }
 
 /* ================================================================

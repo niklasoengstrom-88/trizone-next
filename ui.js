@@ -12,11 +12,11 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          ICU, connReady, validateConn, icuRequest, icuError, proxyAllowed,
          projectActivities, projectWellness, projectAthlete, benchmarksOf,
          pickActivitySource, zoneParityFull, recovery, wellnessFlags,
-         emptyCache, V32_CACHE_KEY,
+         emptyCache, V32_CACHE_KEY, statusGrid,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.10.0 · 2026-08-05";
+export const UI_BUILD = "next-0.11.0 · 2026-08-05";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -25,7 +25,7 @@ const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:nu
             view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[],
             /* fas B: egen datapipeline */
             cache:emptyCache(), src:null, athlete:null, bench:null, recov:null,
-            connMsg:null, syncing:false, syncMsg:null, lastSync:0 };
+            connMsg:null, syncing:false, syncMsg:null, lastSync:0, dimOpen:null };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
     rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
@@ -33,6 +33,7 @@ let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 const SPORTLABEL = { swim:"SIM", bike:"CYKEL", run:"LÖP", strength:"STYRKA" };
 const RECOV_DAYS = 30;                     /* speglar core.RECOV.baseDays i texten */
+const RECOV_DELTA = 5;                     /* speglar core.RECOV.rhrDayDelta i texten */
 const today = () => (globalThis.__TZ_TODAY ?? new Date().toISOString()).slice(0, 10);
 const now = () => {                        /* samma klocka som today() — även under test */
   const t = new Date().toISOString();
@@ -98,11 +99,12 @@ function sessionCard(s) {
 }
 
 /* ---------- Vyväxling (0.7.0): Plan · Logg · Inställningar ---------- */
-const NAV = [["idag", "Idag"], ["plan", "Plan"]];
+const NAV = [["idag", "Idag"], ["plan", "Plan"], ["analys", "Analys"]];
 function render() {
   const h = [];
   if (S.view === "idag") renderIdag(h);
   else if (S.view === "plan") renderPlan(h);
+  else if (S.view === "analys") renderAnalys(h);
   else renderSettings(h);
   h.push(`<nav class="tabs" aria-label="Huvudnavigering">` + NAV.map(([id, label]) =>
     `<button class="tab${S.view === id ? " active" : ""}" data-nav="${id}"
@@ -470,6 +472,73 @@ function dataSection(h) {
     <button class="ghostbtn" data-clearcache>Rensa datacachen</button></div>
     <p class="hint">Cachen är återskapbar med en hämtning och ingår därför aldrig i säkerhetskopian.</p>
   </section>`);
+}
+
+/* ================================================================
+   ANALYS (0.11.0) — statusgriden. L3: visa → förklara → fördjupa.
+   Kortet visar tolkningen; ett tryck fäller ut varför. Ingen dimension
+   bär statusfärg utan en bedömning bakom sig.
+   ================================================================ */
+const DIMDOT = { ok: "ok", warn: "warn", risk: "risk", idle: "idle" };
+
+function renderAnalys(h) {
+  h.push(`<header class="viewhead"><div class="eyebrow">Facit · deterministiskt, aldrig gissningar</div>
+    <h1>Analys</h1>
+    <p class="lede">Tryck på en dimension för varför. Varje siffra går att härleda —
+      inget här är skattat.</p></header>`);
+
+  const grid = statusGrid(S.acts ?? [], S.recov, today(), S.cfg);
+  h.push(`<section class="dimgrid">`);
+  for (const d of grid) {
+    const open = S.dimOpen === d.key;
+    h.push(`<button class="dimcard${open ? " open" : ""}${d.has ? "" : " idle"}"
+        data-dim="${d.key}" aria-expanded="${open}">
+      <span class="dimhead"><span class="dot ${DIMDOT[d.state] ?? "idle"}"></span>
+        <span class="eyebrow">${esc(d.label)}</span></span>
+      <span class="dimval">${esc(d.value)}</span>
+      ${open ? `<span class="dimwhy">${esc(d.why)}</span>` : ""}
+    </button>`);
+  }
+  h.push(`</section>`);
+
+  /* Belastning · 8 veckor — ren layoutmatte, ett koordinatsystem (v29-lärdomen) */
+  const load = grid[0];
+  if (load.has && load.weeks?.length) {
+    const max = Math.max(...load.weeks.map(w => w.minutes), 1);
+    h.push(`<section class="setsec"><div class="eyebrow">Belastning · 8 veckor</div>
+      <div class="bars">${load.weeks.map(w => {
+        const pct = Math.round((w.minutes / max) * 100);
+        return `<div class="bar"><span class="barval">${w.hours}</span>
+          <span class="barcol" style="height:${Math.max(pct, 2)}%"></span>
+          <span class="barlab">${esc(w.monday.slice(5))}</span></div>`;
+      }).join("")}</div>
+      <p class="hint">Timmar per vecka, alla grenar. Måndagens datum märker stapeln.</p>
+    </section>`);
+  }
+
+  /* Vilopuls 14 dagar — kurvan bakom Dagsform */
+  const rows = (S.cache?.wellness ?? []).filter(w => Number(w.restingHR) > 0).slice(-14);
+  if (rows.length >= 4) {
+    const vals = rows.map(w => Number(w.restingHR));
+    const lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 1);
+    const pts = vals.map((v, i) =>
+      `${(i / (vals.length - 1) * 100).toFixed(1)},${(100 - (v - lo) / span * 100).toFixed(1)}`).join(" ");
+    const base = S.recov?.day?.rhrBase;
+    h.push(`<section class="setsec"><div class="eyebrow">Dagsform · vilopuls ${rows.length} dagar</div>
+      <svg class="spark" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.6"
+          vector-effect="non-scaling-stroke"/></svg>
+      <div class="kv"><span class="k">Spann</span><span class="v">${lo}–${hi} bpm</span>
+        ${base != null ? `<span class="k">Din normal</span><span class="v">${base} bpm</span>` : ""}</div>
+      <p class="hint">Avvikelse ≥ ${RECOV_DELTA} bpm över din normal gör att motorn frågar
+        om dagens kvalitetspass — den ändrar aldrig något själv.</p>
+    </section>`);
+  }
+
+  h.push(`<section class="setsec"><div class="eyebrow">Vad som inte finns här än</div>
+    <p class="hint">Effektivitet per gren, PMC och benchmarktrender kräver längre historik
+      och bygger på hämtningen som just kopplats in. De ritas när de kan ritas ur mätdata —
+      aldrig ur skattningar.</p></section>`);
 }
 
 function renderSettings(h) {
@@ -943,7 +1012,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -1043,6 +1112,7 @@ function wire() {
       return;
     }
     if (t.dataset.sync != null) { syncNow(); return; }
+    if (t.dataset.dim) { S.dimOpen = S.dimOpen === t.dataset.dim ? null : t.dataset.dim; render(); return; }
     if (t.dataset.swimhr != null) {
       const next = { ...S.cfg, swimHrValid: !S.cfg.swimHrValid };
       const r = S.store.saveCfg(next);

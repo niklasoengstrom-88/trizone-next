@@ -1481,10 +1481,128 @@ eq(wellnessFlags([], "2026-08-05").length, 0, "alt C: utan data inga flaggor —
   ok(!st.saveCfg({ ...DEFAULT_CFG, conn: { apiKey: "kort", athleteId: "i123456" } }).ok,
      "cfg: trasig anslutning skrivs aldrig"); }
 
+/* ================================================================
+   STATUSGRID (0.11.0) — Analys-vyns dimensioner
+   ================================================================ */
+import { statusGrid, loadStatus, intensityStatus, formStatus, injuryStatus,
+         weeklyLoad } from "./core.js";
+
+const ACT = (id, type, date, min, zt) => ({ id, type, name: "x",
+  start_date_local: `${date}T18:00:00`, moving_time: min * 60,
+  ...(zt ? { icu_hr_zone_times: zt } : {}) });
+
+/* ---------- weeklyLoad: veckor, inte glidande fönster ---------- */
+{ const acts = [ACT(1, "Run", "2026-10-15", 50), ACT(2, "Run", "2026-10-13", 40),
+                ACT(3, "Ride", "2026-10-08", 90), ACT(4, "Run", "2025-01-01", 60)];
+  const w = weeklyLoad(acts, "2026-10-15", 8);
+  eq(w.length, 8, "weeklyLoad: åtta veckor tillbaka");
+  eq(w[7].minutes, 90, "weeklyLoad: innevarande vecka summerar mån–sön");
+  eq(w[6].minutes, 90, "weeklyLoad: föregående vecka räknas för sig");
+  eq(w[7].hours, 1.5, "weeklyLoad: timmar avrundas till en decimal");
+  eq(weeklyLoad(acts, "2026-10-15", 8, "run")[7].minutes, 90,
+     "weeklyLoad: grenfilter räknar bara den grenen");
+  eq(weeklyLoad(acts, "2026-10-15", 8, "bike")[6].minutes, 90, "weeklyLoad: cykel för sig");
+  eq(weeklyLoad([], "2026-10-15").length, 8, "weeklyLoad: tom lista ger ändå veckoraster");
+  eq(weeklyLoad(acts, "trasigt").length, 0, "weeklyLoad: ogiltigt datum ger inget påstående"); }
+
+/* ---------- Belastning mot volymtaket ---------- */
+{ const steady = [ACT(1, "Run", "2026-09-24", 60), ACT(2, "Run", "2026-10-01", 60),
+                  ACT(3, "Run", "2026-10-08", 60), ACT(4, "Run", "2026-10-15", 60)];
+  const r = loadStatus(steady, "2026-10-15", {});
+  eq(r.state, "ok", "belastning: jämn volym är i nivå");
+  eq(r.pct, 100, "belastning: 100 % av 3-veckorssnittet");
+  ok(r.why.includes("Under volymtaket"), "belastning: motiveringen namnger taket");
+  ok(r.why.includes("1:00 h"), "belastning: timmarna redovisas, inte bara procenten"); }
+
+{ const spike = [ACT(1, "Run", "2026-09-24", 60), ACT(2, "Run", "2026-10-01", 60),
+                 ACT(3, "Run", "2026-10-08", 60), ACT(4, "Run", "2026-10-15", 120)];
+  const r = loadStatus(spike, "2026-10-15", {});
+  eq(r.state, "warn", "belastning: dubbel volym passerar taket");
+  eq(r.pct, 200, "belastning: procenten är exakt, inte ungefärlig");
+  ok(r.why.includes("ÖVER volymtaket"), "belastning: överskridandet sägs rakt ut");
+  eq(loadStatus(spike, "2026-10-15", { volumeCapPct: 250 }).state, "ok",
+     "belastning: taket är profildata — höjt tak flyttar gränsen (P2)"); }
+
+{ const r = loadStatus([], "2026-10-15", {});
+  eq(r.state, "idle", "belastning: utan data görs ingen bedömning");
+  eq(r.has, false, "belastning: tomt läge markeras som utan innehåll"); }
+
+/* ---------- Intensitet ur utfall (M-U: verkligheten räknas) ---------- */
+{ const acts = [ACT(1, "Run", "2026-10-14", 60, [1800, 1200, 300, 300, 0]),
+                ACT(2, "Ride", "2026-10-12", 60, [2400, 1200, 0, 0, 0])];
+  const r = intensityStatus(acts, "2026-10-15", {});
+  eq(r.window, 28, "intensitet: fönstret är 28 dagar");
+  ok(r.why.includes("28 dagar"), "V28-REGELN: ingen procentsiffra utan sitt tidsfönster");
+  eq(r.value, "92 % lågintensivt", "intensitet: Z1+Z2 mot totalen");
+  eq(r.state, "ok", "intensitet: över målet är ok");
+  eq(intensityStatus(acts, "2026-10-15", { lowShareTarget: 0.95 }).state, "warn",
+     "intensitet: målet är profildata"); }
+
+{ /* Simmens ogiltiga puls får aldrig blandas in i en mätt siffra */
+  const acts = [ACT(1, "Run", "2026-10-14", 60, [1800, 1200, 300, 300, 0]),
+                ACT(2, "Swim", "2026-10-13", 45, [0, 0, 2700, 0, 0])];
+  const off = intensityStatus(acts, "2026-10-15", {});
+  ok(off.why.includes("1 simpass utanför"), "intensitet: uteslutet simpass REDOVISAS, aldrig tyst");
+  ok(off.why.includes("inte mätdata"), "intensitet: skälet till uteslutningen förklaras");
+  const on = intensityStatus(acts, "2026-10-15", { swimHrValid: true });
+  ok(!on.why.includes("simpass utanför"), "intensitet: med giltigt simband räknas simmen");
+  ok(on.share < off.share, "intensitet: simmens Z3 sänker lågandelen när den räknas");
+  eq(intensityStatus([], "2026-10-15", {}).state, "idle",
+     "intensitet: utan zondata görs ingen bedömning"); }
+
+{ const old = [ACT(1, "Run", "2026-08-01", 60, [3600, 0, 0, 0, 0])];
+  eq(intensityStatus(old, "2026-10-15", {}).has, false,
+     "intensitet: aktiviteter utanför fönstret räknas inte"); }
+
+/* ---------- Dagsform ur recovery() ---------- */
+{ const calm = { has: true, day: { rhr: 53, rhrBase: 52.5, sleepH: 8, sleepBase: 7.4, flags: {} },
+                 trend: { hrv: 45, hrvBase: 48, flags: {} } };
+  const r = formStatus(calm);
+  eq(r.value, "Normal", "dagsform: allt inom baslinjen är normalt");
+  eq(r.state, "ok", "dagsform: normal ger ok");
+  ok(r.why.includes("53") && r.why.includes("52.5"), "dagsform: mätvärde OCH baslinje visas");
+  ok(r.why.includes("din egen baslinje") || r.why.includes("Allt inom"),
+     "dagsform: det sägs att måttet är relativt"); }
+
+{ const off = { has: true, day: { rhr: 60, rhrBase: 52, sleepH: 5, sleepBase: 7.4,
+                                  flags: { rhr: true } }, trend: { flags: {} } };
+  const r = formStatus(off);
+  eq(r.value, "Avvikande", "dagsform: dagssignal ger avvikande");
+  eq(r.state, "warn", "dagsform: avvikelse varnar");
+  ok(r.why.includes("du bestämmer"), "dagsform: förslag, aldrig beslut (D2)"); }
+
+{ const tr = { has: true, day: { rhr: 53, rhrBase: 52, flags: {} },
+               trend: { hrv: 40, hrvBase: 50, flags: { hrv: true } } };
+  const r = formStatus(tr);
+  eq(r.value, "Trend att bevaka", "dagsform: trendsignal skiljs från dagssignal");
+  ok(r.why.includes("volym går bra"), "dagsform: trenden säger vad man KAN göra"); }
+
+eq(formStatus(null).state, "idle", "dagsform: utan wellness görs ingen bedömning");
+eq(formStatus({ has: false }).has, false, "dagsform: tomt läge markeras");
+
+/* ---------- Skaderisk: platshållare UTAN påstående ---------- */
+{ const r = injuryStatus();
+  eq(r.state, "idle", "skaderisk: platshållaren bär INGEN statusfärg");
+  eq(r.has, false, "skaderisk: kortet markeras som utan bedömning");
+  ok(!/ingen aktiv flagga/i.test(r.value + r.why),
+     "skaderisk: appen påstår ALDRIG att risken är låg när den inte mätt något");
+  ok(r.why.includes("ingen bedömning"), "skaderisk: frånvaron av bedömning sägs rakt ut"); }
+
+/* ---------- Griden som helhet ---------- */
+{ const g = statusGrid([ACT(1, "Run", "2026-10-14", 60, [1800, 1200, 300, 300, 0])],
+                       { has: true, day: { rhr: 53, rhrBase: 52.5, flags: {} }, trend: { flags: {} } },
+                       "2026-10-15", {});
+  eq(g.length, 4, "statusgrid: fyra dimensioner");
+  eq(g.map(d => d.key), ["load", "intensity", "form", "injury"],
+     "statusgrid: ordningen är fast — belastning, intensitet, dagsform, skaderisk");
+  eq(g.filter(d => d.has).length, 3, "statusgrid: tre av fyra bär bedömning i 0.11.0");
+  ok(g.every(d => d.label && d.value && d.why),
+     "statusgrid: varje kort har etikett, värde OCH varför — aldrig en siffra utan förklaring"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 517;
+const EXPECTED_MIN = 562;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.10.0 · 2026-08-05
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.11.0 · 2026-08-05
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.10.0 · 2026-08-05" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.11.0 · 2026-08-05" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -313,11 +313,22 @@ ok(!els.app.innerHTML.includes('data-nav="logg"'), "Logg-fliken är borttagen (b
 has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
 
 clickBtn({ nav: "installningar" });
-/* Stämpeln läses ur koden, inte ur en hårdkodad sträng: testet ska fånga
-   BRUTEN PARITET, inte tvinga fram en handpålagd redigering vid varje bump. */
+/* ---------- Leveransvakt (regression 2026-08-05) ----------
+   0.10.0 levererades TVÅ gånger med olika innehåll och samma stämpel. sw.js
+   cachar ui.js och core.js cache-first, och cachenamnet bärs av stämpeln —
+   alltså serverade service workern den första leveransens ui.js till en
+   användare som deployat den andra. index.html är network-first och såg färsk
+   ut, vilket dolde felet. Regeln som följer: VARJE zip får eget patchnummer,
+   även småfixar inom samma session. Testet nedan tvingar fram medvetenheten. */
 const STAMP = (await import("./ui.js")).UI_BUILD;
+const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.10.0 · 2026-08-05", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.11.0 · 2026-08-05", "stämpeln i ui.js är den väntade för denna release");
+ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
+{ const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
+  const ver = STAMP.split(" ")[0].replace("next-", "");
+  ok(sw.includes(`const CACHE = "trizone-next-${ver}"`),
+     "sw-cachenamnet följer stämpeln — annars invalideras aldrig den gamla koden"); }
 has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
 ok(!els.app.innerHTML.includes("Livsschema"), "livsschema-editorn är borttagen (beslut 0.9.1)");
 has(els.app.innerHTML, "data-evlog", "händelseloggen nås via knapp i Inställningar");
@@ -616,6 +627,42 @@ clickBtn({ swimhr: "" });
 has(els.app.innerHTML, "Pulsremsa på simpass: av", "reglaget går att slå av igen");
 ok(JSON.parse(mem.get("trizone.next.cfg.v1")).swimHrValid === false, "avslaget sparas också");
 
+/* ---------- ANALYS-vyn (0.11.0) ---------- */
+clickBtn({ nav: "analys" });
+has(els.app.innerHTML, "Analys", "Analys finns som egen vy");
+has(els.app.innerHTML, "aldrig gissningar", "vyn deklarerar sin egen ambition");
+has(els.app.innerHTML, "Belastning", "dimension 1 finns");
+has(els.app.innerHTML, "Intensitet", "dimension 2 finns");
+has(els.app.innerHTML, "Dagsform", "dimension 3 finns");
+has(els.app.innerHTML, "Skaderisk", "dimension 4 finns som flik");
+has(els.app.innerHTML, "Inte kopplad än", "skaderisk säger rakt ut att den saknar funktion");
+ok(!/ingen aktiv flagga/i.test(els.app.innerHTML),
+   "skaderisk PÅSTÅR ALDRIG att risken är låg — en grön prick utan bedömning vore en lögn");
+ok(els.app.innerHTML.includes('class="dot idle"'),
+   "skaderisk bär neutral markör, inte statusfärg");
+ok((els.app.innerHTML.match(/class="dimcard/g) ?? []).length === 4, "griden har fyra kort");
+
+/* L3: visa → förklara → fördjupa. Varför ligger ett tryck bort, inte framme. */
+ok(!els.app.innerHTML.includes("dimwhy"), "varför är dolt tills man frågar efter det");
+clickBtn({ dim: "form" });
+has(els.app.innerHTML, "dimwhy", "ett tryck fäller ut varför");
+has(els.app.innerHTML, "normalen", "dagsformens varför visar baslinjen, inte bara värdet");
+clickBtn({ dim: "form" });
+ok(!els.app.innerHTML.includes("dimwhy"), "ett andra tryck fäller in igen");
+clickBtn({ dim: "intensity" });
+has(els.app.innerHTML, "28 dagar", "V28-REGELN: procentsiffran bär sitt tidsfönster");
+
+/* Grafer: ett koordinatsystem per axel (v29-lärdomen) */
+has(els.app.innerHTML, "Belastning · 8 veckor", "belastningsgrafen finns");
+has(els.app.innerHTML, "barcol", "staplarna renderas");
+has(els.app.innerHTML, "Timmar per vecka", "grafen säger vad axeln visar");
+has(els.app.innerHTML, "vilopuls", "vilopulskurvan finns när wellness hämtats");
+has(els.app.innerHTML, "Din normal", "kurvan redovisar baslinjen den mäts mot");
+has(els.app.innerHTML, "ändrar aldrig något själv", "kurvan säger vad motorn gör med avvikelsen");
+has(els.app.innerHTML, "aldrig ur skattningar", "det som saknas redovisas ärligt");
+
+clickBtn({ nav: "installningar" });
+
 /* Cachen går att rensa — och då gäller v32 igen */
 clickBtn({ clearcache: "" });
 ok(!mem.has("trizone.next.cache.v1"), "datacachen går att rensa");
@@ -623,7 +670,7 @@ has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på 
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 208;
+const EXPECTED_MIN = 230;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
