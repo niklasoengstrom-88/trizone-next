@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.11.0 · 2026-08-05
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.12.0 · 2026-08-05
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.11.0 · 2026-08-05" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.12.0 · 2026-08-05" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -67,7 +67,8 @@ const wellDay = (i) => {                       /* 35 dygn fram t.o.m. 2026-10-15
 };
 /* Sista veckan förhöjd: dagssignalen OCH trendsignalen fyrar båda (alternativ C) */
 const ICU_WELLNESS = Array.from({ length: 35 }, (_, i) => ({
-  id: wellDay(i), restingHR: i >= 28 ? 56 : 48, hrv: 62, sleepSecs: 6.4 * 3600 }));
+  id: wellDay(i), restingHR: i >= 28 ? 56 : 48, hrv: 62, sleepSecs: 6.4 * 3600,
+  ctl: 55 + i * 0.3, atl: 60 + (i % 7) }));
 const ICU_ACTIVITIES = [
   { id: 901, type: "Run", name: "Löpintervaller tröskel", start_date_local: "2026-10-15T18:05:00",
     moving_time: 52 * 60, distance: 10400, icu_hr_zone_times: [720, 360, 120, 1500, 420],
@@ -323,7 +324,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.11.0 · 2026-08-05", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.12.0 · 2026-08-05", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -661,6 +662,31 @@ has(els.app.innerHTML, "Din normal", "kurvan redovisar baslinjen den mäts mot")
 has(els.app.innerHTML, "ändrar aldrig något själv", "kurvan säger vad motorn gör med avvikelsen");
 has(els.app.innerHTML, "aldrig ur skattningar", "det som saknas redovisas ärligt");
 
+/* ---------- PMC (0.12.0): intervals.icu räknar, appen räknar aldrig om ---------- */
+has(els.app.innerHTML, "fitness och trötthet", "PMC-avsnittet finns");
+has(els.app.innerHTML, "Form (TSB)", "TSB redovisas");
+has(els.app.innerHTML, "Fitness (CTL)", "legenden namnger kurvorna");
+has(els.app.innerHTML, "räknar dem aldrig om",
+   "M2: det sägs att CTL/ATL kommer färdiga — appen gör ingen andra beräkning");
+has(els.app.innerHTML, "hur benen känns", "TSB-tolkningen relativiseras mot verkligheten");
+
+/* ---------- Effektivitet: härledda fönster, Z2/Z3-växling ---------- */
+has(els.app.innerHTML, "Aerob effektivitet", "effektivitetsavsnittet finns");
+has(els.app.innerHTML, "aldrig prognos", "avsnittet deklarerar att det är uppmätt");
+has(els.app.innerHTML, "Löpning", "grenväljaren finns");
+has(els.app.innerHTML, "dina egna zongränser", "fönstrens ursprung sägs ut");
+has(els.app.innerHTML, "Z2 · 129–148", "Z2-fönstret HÄRLEDS ur profilen och visas på knappen");
+has(els.app.innerHTML, "Z3 · 149–162", "Z3-fönstret finns som val — racepace-jämförelsen");
+clickBtn({ effzone: "3" });
+ok(els.app.innerHTML.includes('data-effzone="3"'), "zonvalet går att växla");
+clickBtn({ effsport: "swim" });
+has(els.app.innerHTML, "aldrig på puls", "sim väljs på distans — simpuls är inte mätdata");
+ok(!els.app.innerHTML.includes("Z2 · "), "sim visar inga pulszonval alls");
+clickBtn({ effsport: "bike" });
+has(els.app.innerHTML, "Z2 · 121–140", "cykeln bär sina EGNA gränser, aldrig löpningens");
+clickBtn({ effsport: "run" });
+clickBtn({ effzone: "2" });
+
 clickBtn({ nav: "installningar" });
 
 /* Cachen går att rensa — och då gäller v32 igen */
@@ -670,7 +696,7 @@ has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på 
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 230;
+const EXPECTED_MIN = 245;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

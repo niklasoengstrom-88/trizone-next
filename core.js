@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.11.0 · 2026-08-05";
+export const BUILD = "next-0.12.0 · 2026-08-05";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -1832,6 +1832,142 @@ export function wellnessFlags(wellness, todayISO, opts = {}) {
   if (r.trend.flags.rhr || r.trend.flags.hrv)
     out.push({ id: "recovery-watch", source: "derived", why: r.trend.why.join(" · ") });
   return out;
+}
+
+/* ================================================================
+   PMC + EFFEKTIVITET (0.12.0)
+   ================================================================ */
+
+/* PMC: CTL/ATL kommer FÄRDIGRÄKNADE från intervals.icu (wellness-fältet).
+   Vi räknar dem aldrig om — en andra beräkning av samma sak divergerar
+   garanterat (M2/effSeries-principen). TSB är den enda härledningen. */
+export function pmcSeries(wellness, todayISO, days = 84) {
+  const from = dayShift(todayISO, -days);
+  return (wellness ?? [])
+    .filter(w => DATE_RE.test(String(w?.id ?? "")) && w.id >= from && w.id <= todayISO
+                 && Number.isFinite(Number(w.ctl)) && Number.isFinite(Number(w.atl)))
+    .sort((a, b) => a.id < b.id ? -1 : 1)
+    .map(w => ({ date: w.id, ctl: Math.round(Number(w.ctl) * 10) / 10,
+                 atl: Math.round(Number(w.atl) * 10) / 10,
+                 tsb: Math.round((Number(w.ctl) - Number(w.atl)) * 10) / 10 }));
+}
+
+/* TSB-tolkning. Intervallen är riktvärden ur träningslitteraturen, inte
+   sanningar — de redovisas därför alltid tillsammans med siffran. */
+export const TSB_BANDS = [
+  { max: -25, key: "deep",    label: "Djup belastning" },
+  { max: -5,  key: "build",   label: "I bygge" },   /* demons intervall: −5 till −20 */
+  { max: 5,   key: "neutral", label: "Neutral" },
+  { max: 25,  key: "fresh",   label: "Frisk" },
+  { max: Infinity, key: "detrain", label: "Otränad risk" }
+];
+
+export function pmcStatus(wellness, todayISO, days = 84) {
+  const s = pmcSeries(wellness, todayISO, days);
+  if (!s.length)
+    return { has: false, series: [], why: "intervals.icu har ingen CTL/ATL i fönstret än." };
+  const last = s[s.length - 1];
+  const band = TSB_BANDS.find(b => last.tsb <= b.max);
+  const wk = s.length > 7 ? s[s.length - 8] : s[0];
+  const dCtl = Math.round((last.ctl - wk.ctl) * 10) / 10;
+  return { has: true, series: s, ...last, band: band.key, label: band.label,
+           ctlDelta: dCtl, days,
+           why: `Form (TSB) ${last.tsb > 0 ? "+" : ""}${last.tsb} = fitness ${last.ctl} − trötthet ${last.atl}. `
+              + `Fitness ${dCtl >= 0 ? "+" : ""}${dCtl} på en vecka. `
+              + `CTL och ATL kommer färdiga från intervals.icu — appen räknar dem aldrig om.` };
+}
+
+/* Pulsfönster HÄRLEDS ur atletprofilens zongränser (produktägarbeslut 2026-08-05):
+   atletagnostiskt, och följer automatiskt med när trösklarna testas om.
+   D6 gäller: historiken läses alltid med dagens fönster. */
+export function zoneBand(athlete, sport, zone) {
+  const z = athlete?.sports?.[sport]?.zones;
+  if (!Array.isArray(z) || zone < 1 || zone > z.length) return null;
+  return { lo: zone === 1 ? 0 : z[zone - 2] + 1, hi: z[zone - 1], zone };
+}
+
+/* Minsta kvadrat på (index, värde) — ren, testbar, ingen bibliotekstro. */
+function fitLine(pts) {
+  const n = pts.length;
+  if (n < 2) return null;
+  const mx = pts.reduce((s, p) => s + p.x, 0) / n, my = pts.reduce((s, p) => s + p.y, 0) / n;
+  let num = 0, den = 0;
+  for (const p of pts) { num += (p.x - mx) * (p.y - my); den += (p.x - mx) ** 2; }
+  if (!den) return null;
+  const slope = num / den;
+  return { slope, at: x => my + slope * (x - mx) };
+}
+
+export const EFF = { minMinutes: 30, minSwimMeters: 600, minPoints: 4 };
+
+/* Aerob effektivitet: samma puls, bättre output = progression.
+   Löpning → tempo · cykel → watt (ENDAST med mätare) · sim → tempo (distansurval,
+   aldrig pulsurval, eftersom simpuls inte är mätdata). */
+export function effTrend(activities, athlete, sport, zone = 2, opts = {}) {
+  const O = { ...EFF, ...opts };
+  const band = sport === "swim" ? null : zoneBand(athlete, sport, zone);
+  if (sport !== "swim" && !band)
+    return { has: false, points: [], sport, zone,
+             why: `Inga pulszoner för ${sport} i intervals.icu — fönstret kan inte härledas.` };
+
+  const raw = [], skipped = { est: 0, trainer: 0, short: 0, band: 0 };
+  for (const a of activities ?? []) {
+    if (SPORT_MAP[a.type] !== sport) continue;
+    const secs = Number(a.moving_time) || 0, dist = Number(a.distance) || 0;
+    const date = matchDate(a.start_date_local);
+    if (!date) continue;
+
+    if (sport === "swim") {
+      if (dist < O.minSwimMeters) { skipped.short++; continue; }
+      raw.push({ date, y: (secs / dist) * 100, unit: "s/100m" });   /* lägre = bättre */
+      continue;
+    }
+    if (secs < O.minMinutes * 60) { skipped.short++; continue; }
+    const hr = Number(a.average_heartrate ?? a.icu_average_hr);
+    if (!Number.isFinite(hr) || hr < band.lo || hr > band.hi) { skipped.band++; continue; }
+
+    if (sport === "bike") {
+      /* Ärvd regel: watt utan mätare är Stravas estimat och används ALDRIG */
+      if (a.has_device_watts !== true) { skipped.est++; continue; }
+      const w = Number(a.average_watts ?? a.icu_average_watts);
+      if (!Number.isFinite(w) || w <= 0) { skipped.est++; continue; }
+      raw.push({ date, y: w, unit: "W", hr });                       /* högre = bättre */
+    } else {
+      /* Löpband blandas aldrig med utomhus — estimatdistans mot GPS-distans */
+      if (a.trainer === true) { skipped.trainer++; continue; }
+      if (dist < 1000) { skipped.short++; continue; }
+      raw.push({ date, y: (secs / dist) * 1000, unit: "s/km", hr }); /* lägre = bättre */
+    }
+  }
+
+  raw.sort((a, b) => a.date < b.date ? -1 : 1);
+  const notes = [];
+  if (skipped.est) notes.push(`${skipped.est} cykelpass utan wattmätare uteslutna — estimat är inte mätvärden`);
+  if (skipped.trainer) notes.push(`${skipped.trainer} löpbandspass uteslutna — estimatdistans blandas aldrig med GPS`);
+
+  if (raw.length < O.minPoints)
+    return { has: false, points: raw, sport, zone, band, skipped, lowerBetter: sport !== "bike",
+             why: `För få pass i fönstret än (${raw.length} av minst ${O.minPoints}).`
+                + (notes.length ? " " + notes.join(" · ") + "." : "") };
+
+  const pts = raw.map((p, i) => ({ x: i, y: p.y }));
+  const line = fitLine(pts);
+  const first = line ? line.at(0) : raw[0].y, last = line ? line.at(pts.length - 1) : raw[raw.length - 1].y;
+  const lowerBetter = sport !== "bike";
+  const better = lowerBetter ? last < first : last > first;
+  const unit = raw[0].unit;
+  const fmt = v => unit === "W" ? `${Math.round(v)} W`
+    : unit === "s/km" ? `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, "0")}/km`
+    : `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, "0")}/100 m`;
+
+  return { has: true, points: raw, sport, zone, band, unit, lowerBetter, skipped,
+           first, last, from: raw[0].date, to: raw[raw.length - 1].date, n: raw.length, better,
+           why: `${fmt(first)} → ${fmt(last)} över ${raw.length} pass `
+              + (band ? `med snittpuls ${band.lo}–${band.hi} (Z${zone} ur intervals.icu), ` : `på ≥ ${O.minSwimMeters} m, `)
+              + `${raw[0].date} till ${raw[raw.length - 1].date}. `
+              + `${better ? "Samma puls, bättre output — progression." : "Ingen förbättring i fönstret."}`
+              + (notes.length ? " " + notes.join(" · ") + "." : ""),
+           fmt };
 }
 
 /* ================================================================

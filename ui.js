@@ -12,11 +12,11 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          ICU, connReady, validateConn, icuRequest, icuError, proxyAllowed,
          projectActivities, projectWellness, projectAthlete, benchmarksOf,
          pickActivitySource, zoneParityFull, recovery, wellnessFlags,
-         emptyCache, V32_CACHE_KEY, statusGrid,
+         emptyCache, V32_CACHE_KEY, statusGrid, pmcStatus, effTrend, zoneBand,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.11.0 · 2026-08-05";
+export const UI_BUILD = "next-0.12.0 · 2026-08-05";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -25,7 +25,7 @@ const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:nu
             view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[],
             /* fas B: egen datapipeline */
             cache:emptyCache(), src:null, athlete:null, bench:null, recov:null,
-            connMsg:null, syncing:false, syncMsg:null, lastSync:0, dimOpen:null };
+            connMsg:null, syncing:false, syncMsg:null, lastSync:0, dimOpen:null, effSport:"run", effZone:2 };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
     rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
@@ -535,10 +535,82 @@ function renderAnalys(h) {
     </section>`);
   }
 
+  pmcSection(h);
+  effSection(h);
+
   h.push(`<section class="setsec"><div class="eyebrow">Vad som inte finns här än</div>
-    <p class="hint">Effektivitet per gren, PMC och benchmarktrender kräver längre historik
-      och bygger på hämtningen som just kopplats in. De ritas när de kan ritas ur mätdata —
-      aldrig ur skattningar.</p></section>`);
+    <p class="hint">Benchmarktrender mot mål och tidsintervallväljare per graf kommer
+      när de kan ritas ur mätdata — aldrig ur skattningar.</p></section>`);
+}
+
+/* ---------- PMC: fitness, trötthet, form ---------- */
+function pmcSection(h) {
+  const p = pmcStatus(S.cache?.wellness ?? [], today(), 84);
+  h.push(`<section class="setsec"><div class="eyebrow">Form · fitness och trötthet · 12 veckor</div>`);
+  if (!p.has) {
+    h.push(`<p class="hint">${esc(p.why)}</p></section>`);
+    return;
+  }
+  const s = p.series, n = s.length;
+  const vals = s.flatMap(d => [d.ctl, d.atl]);
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 1);
+  const line = key => s.map((d, i) =>
+    `${(i / Math.max(n - 1, 1) * 100).toFixed(1)},${(100 - (d[key] - lo) / span * 100).toFixed(1)}`).join(" ");
+  h.push(`<svg class="spark tall" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points="${line("ctl")}" fill="none" stroke="var(--info)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+      <polyline points="${line("atl")}" fill="none" stroke="var(--warn)" stroke-width="1.4" vector-effect="non-scaling-stroke"/>
+    </svg>
+    <div class="legend"><span><i class="sw" style="background:var(--info)"></i>Fitness (CTL)</span>
+      <span><i class="sw" style="background:var(--warn)"></i>Trötthet (ATL)</span></div>
+    <div class="kv">
+      <span class="k">Form (TSB)</span><span class="v">${p.tsb > 0 ? "+" : ""}${p.tsb} · ${esc(p.label)}</span>
+      <span class="k">Fitness / trötthet</span><span class="v">${p.ctl} / ${p.atl}</span>
+      <span class="k">Spann</span><span class="v">${Math.round(lo)}–${Math.round(hi)}</span>
+    </div>
+    <p class="hint">${esc(p.why)}</p>
+    <p class="hint">Riktvärdena för vad ett TSB-tal betyder är litteraturens, inte dina —
+      läs siffran mot hur benen känns, inte tvärtom.</p></section>`);
+}
+
+/* ---------- Effektivitet per gren: samma puls, bättre output ---------- */
+const EFFSPORTS = [["run", "Löpning"], ["bike", "Cykel"], ["swim", "Simning"]];
+
+function effSection(h) {
+  const sport = S.effSport, zone = S.effZone;
+  const t = effTrend(S.acts ?? [], S.athlete, sport, zone);
+  h.push(`<section class="setsec"><div class="eyebrow">Aerob effektivitet</div>
+    <p class="hint">Samma puls, bättre output = progression. Uppmätt, aldrig prognos.</p>
+    <div class="chips">${EFFSPORTS.map(([id, label]) =>
+      `<button class="chip${sport === id ? " on" : ""}" data-effsport="${id}">${label}</button>`).join("")}</div>`);
+
+  if (sport !== "swim") {
+    h.push(`<div class="chips">${[2, 3].map(z => {
+      const b = zoneBand(S.athlete, sport, z);
+      return `<button class="chip${zone === z ? " on" : ""}" data-effzone="${z}">Z${z}${
+        b ? ` · ${b.lo}–${b.hi}` : ""}</button>`;
+    }).join("")}</div>
+    <p class="hint">Fönstren är dina egna zongränser ur intervals.icu — inga tumregler.
+      Z3 låter dig jämföra pass i racepace.</p>`);
+  } else {
+    h.push(`<p class="hint">Sim väljs på distans (≥ 600 m), aldrig på puls —
+      optisk handledspuls i vatten är inte mätdata.</p>`);
+  }
+
+  if (!t.has) { h.push(`<p class="hint">${esc(t.why)}</p></section>`); return; }
+
+  const ys = t.points.map(p => p.y);
+  const lo = Math.min(...ys), hi = Math.max(...ys), span = Math.max(hi - lo, 1);
+  const col = { run: "var(--run)", bike: "var(--bike)", swim: "var(--swim)" }[sport];
+  /* Lägre är bättre för tempo ⇒ y-axeln vänds så att UPPÅT alltid = bättre */
+  const yOf = v => t.lowerBetter ? (v - lo) / span * 100 : 100 - (v - lo) / span * 100;
+  const dots = t.points.map((p, i) =>
+    `<circle cx="${(i / Math.max(t.points.length - 1, 1) * 100).toFixed(1)}"
+       cy="${yOf(p.y).toFixed(1)}" r="1.6" fill="${col}"/>`).join("");
+  h.push(`<svg class="spark tall" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="0" y1="${yOf(t.first).toFixed(1)}" x2="100" y2="${yOf(t.last).toFixed(1)}"
+        stroke="${col}" stroke-width="1.2" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+      ${dots}</svg>
+    <p class="hint">Uppåt i grafen = bättre. ${esc(t.why)}</p></section>`);
 }
 
 function renderSettings(h) {
@@ -1012,7 +1084,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -1113,6 +1185,8 @@ function wire() {
     }
     if (t.dataset.sync != null) { syncNow(); return; }
     if (t.dataset.dim) { S.dimOpen = S.dimOpen === t.dataset.dim ? null : t.dataset.dim; render(); return; }
+    if (t.dataset.effsport) { S.effSport = t.dataset.effsport; render(); return; }
+    if (t.dataset.effzone) { S.effZone = Number(t.dataset.effzone); render(); return; }
     if (t.dataset.swimhr != null) {
       const next = { ...S.cfg, swimHrValid: !S.cfg.swimHrValid };
       const r = S.store.saveCfg(next);

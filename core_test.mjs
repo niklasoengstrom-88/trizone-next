@@ -1599,10 +1599,131 @@ eq(formStatus({ has: false }).has, false, "dagsform: tomt läge markeras");
   ok(g.every(d => d.label && d.value && d.why),
      "statusgrid: varje kort har etikett, värde OCH varför — aldrig en siffra utan förklaring"); }
 
+/* ================================================================
+   PMC + EFFEKTIVITET (0.12.0)
+   ================================================================ */
+import { pmcSeries, pmcStatus, zoneBand, effTrend, EFF, TSB_BANDS } from "./core.js";
+
+const ATH2 = projectAthlete({ sportSettings: [
+  { types: ["Run"], hr_zones: [128, 148, 162, 173, 190], lthr: 173 },
+  { types: ["Ride"], hr_zones: [110, 130, 145, 158, 175], lthr: 166 } ] }).athlete;
+
+/* ---------- PMC: CTL/ATL kommer färdiga, TSB är enda härledningen ---------- */
+{ const w = [{ id: "2026-10-01", ctl: 60, atl: 55 }, { id: "2026-10-08", ctl: 62, atl: 70 },
+             { id: "2026-10-15", ctl: 64, atl: 72 }, { id: "2026-10-16", ctl: 64 },
+             { id: "2026-06-01", ctl: 40, atl: 40 }];
+  const s = pmcSeries(w, "2026-10-15", 84);
+  eq(s.length, 3, "pmc: rader utan både ctl och atl faller bort, gamla utanför fönstret också");
+  eq(s[2].tsb, -8, "pmc: TSB = CTL − ATL, enda härledningen");
+  eq(s[0].date, "2026-10-01", "pmc: sorterad i datumordning");
+  const p = pmcStatus(w, "2026-10-15", 84);
+  eq(p.tsb, -8, "pmc: senaste dagens form");
+  eq(p.label, "I bygge", "pmc: TSB −8 tolkas som bygge");
+  ok(p.why.includes("räknar dem aldrig om"),
+     "pmc: det sägs uttryckligen att appen inte räknar om intervals.icu:s siffror (M2)");
+  eq(pmcStatus([], "2026-10-15").has, false, "pmc: utan data görs inget påstående");
+  ok(pmcStatus([], "2026-10-15").why.includes("intervals.icu"), "pmc: tomt läge pekar på källan"); }
+
+{ const band = t => TSB_BANDS.find(b => t <= b.max).key;
+  eq(band(-35), "deep", "TSB −35 = djup belastning");
+  eq(band(-15), "build", "TSB −15 = i bygge");
+  eq(band(0), "neutral", "TSB 0 = neutral");
+  eq(band(15), "fresh", "TSB +15 = frisk");
+  eq(band(40), "detrain", "TSB +40 = otränad risk"); }
+
+/* ---------- Pulsfönster HÄRLEDS ur profilen (produktägarbeslut) ---------- */
+{ eq(zoneBand(ATH2, "run", 2), { lo: 129, hi: 148, zone: 2 },
+     "zonfönster: Z2 löp härleds ur intervals.icu, inte ur en tumregel");
+  eq(zoneBand(ATH2, "run", 3), { lo: 149, hi: 162, zone: 3 },
+     "zonfönster: Z3 löp — racepace-jämförelsen");
+  eq(zoneBand(ATH2, "bike", 2), { lo: 111, hi: 130, zone: 2 },
+     "zonfönster: cykeln har egna gränser, aldrig löpningens");
+  eq(zoneBand(ATH2, "run", 1).lo, 0, "zonfönster: Z1 börjar på noll");
+  eq(zoneBand(ATH2, "swim", 2), null, "zonfönster: gren utan zoner ger null, aldrig en gissning");
+  eq(zoneBand(null, "run", 2), null, "zonfönster: utan profil inget fönster");
+  eq(zoneBand(ATH2, "run", 9), null, "zonfönster: zon utanför profilen avvisas"); }
+
+/* ---------- Effektivitet: löpning ---------- */
+const runSet = (n, paceStart, paceStep, hr = 140) => Array.from({ length: n }, (_, i) => ({
+  id: 100 + i, type: "Run", start_date_local: `2026-0${i < 5 ? 6 : 7}-${String((i % 5) * 5 + 1).padStart(2, "0")}T18:00:00`,
+  moving_time: Math.round((paceStart + i * paceStep) * 7), distance: 7000, average_heartrate: hr }));
+
+{ const t = effTrend(runSet(10, 350, -4), ATH2, "run", 2);
+  ok(t.has, "effektivitet: tio pass räcker för en trend");
+  eq(t.n, 10, "effektivitet: alla pass i fönstret räknas");
+  ok(t.better, "effektivitet: sjunkande tempo vid samma puls = progression");
+  ok(t.lowerBetter, "effektivitet: för tempo är lägre bättre");
+  ok(t.why.includes("129–148"), "effektivitet: fönstret redovisas i klartext");
+  ok(t.why.includes("Z2 ur intervals.icu"), "effektivitet: fönstrets ursprung namnges");
+  ok(t.why.includes("/km"), "effektivitet: tempo visas som tempo, inte som sekunder"); }
+
+{ /* Puls utanför fönstret ⇒ passet hör inte hemma i jämförelsen */
+  const t = effTrend(runSet(10, 350, -4, 170), ATH2, "run", 2);
+  eq(t.has, false, "effektivitet: pass utanför pulsfönstret utesluts");
+  eq(t.skipped.band, 10, "effektivitet: uteslutningen räknas");
+  ok(effTrend(runSet(10, 350, -4, 155), ATH2, "run", 3).has,
+     "effektivitet: samma pass hamnar i Z3-fönstret när man växlar zon"); }
+
+{ /* Löpband blandas ALDRIG med utomhus (matchning §3) */
+  const acts = runSet(10, 350, -4).map((a, i) => i < 5 ? { ...a, trainer: true } : a);
+  const t = effTrend(acts, ATH2, "run", 2);
+  eq(t.skipped.trainer, 5, "effektivitet: löpbandspass utesluts");
+  ok(t.why.includes("estimatdistans blandas aldrig med GPS"),
+     "effektivitet: skälet till uteslutningen förklaras, aldrig tyst"); }
+
+{ const short = runSet(10, 350, -4).map(a => ({ ...a, moving_time: 600, distance: 1500 }));
+  eq(effTrend(short, ATH2, "run", 2).has, false, "effektivitet: pass under 30 min räknas inte"); }
+
+/* ---------- Effektivitet: cykel — watt utan mätare är aldrig mätdata ---------- */
+const bikeSet = (n, w0, step, dev) => Array.from({ length: n }, (_, i) => ({
+  id: 200 + i, type: "Ride", start_date_local: `2026-07-${String(i + 1).padStart(2, "0")}T18:00:00`,
+  moving_time: 3600, distance: 30000, average_heartrate: 125,
+  average_watts: w0 + i * step, has_device_watts: dev }));
+
+{ const t = effTrend(bikeSet(8, 170, 3, true), ATH2, "bike", 2);
+  ok(t.has, "effektivitet: cykel med wattmätare ger trend");
+  ok(!t.lowerBetter, "effektivitet: för watt är HÖGRE bättre");
+  ok(t.better, "effektivitet: stigande watt vid samma puls = progression");
+  ok(t.why.includes("W"), "effektivitet: watt visas som watt"); }
+
+{ const t = effTrend(bikeSet(8, 170, 3, false), ATH2, "bike", 2);
+  eq(t.has, false, "effektivitet: utan wattmätare finns ingen cykeltrend");
+  eq(t.skipped.est, 8, "effektivitet: estimatpassen räknas som uteslutna");
+  ok(t.why.includes("estimat är inte mätvärden"),
+     "ÄRVD REGEL: Stravas estimerade watt presenteras ALDRIG som mätvärde"); }
+
+{ const mixed = [...bikeSet(6, 170, 3, true), ...bikeSet(6, 250, 3, false).map(a => ({ ...a, id: a.id + 50 }))];
+  const t = effTrend(mixed, ATH2, "bike", 2);
+  eq(t.n, 6, "effektivitet: bara mätarpassen kommer in i kurvan");
+  eq(t.skipped.est, 6, "effektivitet: estimatpassen redovisas som bortvalda"); }
+
+/* ---------- Effektivitet: sim väljs på distans, aldrig på puls ---------- */
+const swimSet = (n, secStart, step, meters = 1500) => Array.from({ length: n }, (_, i) => ({
+  id: 300 + i, type: "Swim", start_date_local: `2026-07-${String(i + 1).padStart(2, "0")}T07:00:00`,
+  moving_time: secStart + i * step, distance: meters }));
+
+{ const t = effTrend(swimSet(8, 2400, -20), ATH2, "swim", 2);
+  ok(t.has, "effektivitet: sim ger trend trots att profilen saknar simzoner");
+  eq(t.band, null, "effektivitet: simmen har INGET pulsfönster — urvalet är distansbaserat");
+  ok(t.why.includes("600 m"), "effektivitet: simmens urvalskriterium redovisas");
+  ok(t.why.includes("/100 m"), "effektivitet: simtempo visas per 100 m");
+  ok(t.better, "effektivitet: sjunkande simtempo = progression");
+  eq(effTrend(swimSet(8, 2400, -20, 300), ATH2, "swim", 2).has, false,
+     "effektivitet: korta simpass under 600 m räknas inte"); }
+
+/* ---------- Tomma och trasiga lägen ---------- */
+{ eq(effTrend([], ATH2, "run", 2).has, false, "effektivitet: utan pass ingen trend");
+  ok(effTrend([], ATH2, "run", 2).why.includes("minst"), "effektivitet: minimikravet sägs ut");
+  const noAth = effTrend(runSet(10, 350, -4), null, "run", 2);
+  eq(noAth.has, false, "effektivitet: utan atletprofil kan fönstret inte härledas");
+  ok(noAth.why.includes("intervals.icu"), "effektivitet: användaren får veta var fönstret ska sättas");
+  eq(effTrend(runSet(3, 350, -4), ATH2, "run", 2).has, false,
+     `effektivitet: färre än ${EFF.minPoints} pass ger ingen trendlinje (ingen falsk precision)`); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 562;
+const EXPECTED_MIN = 610;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
