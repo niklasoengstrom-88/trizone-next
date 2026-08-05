@@ -7,24 +7,32 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          todayView, planDayOf, effectiveRpe, logResult, unlogResult, FEEL_LABEL, sessionDate,
          monthView, planMonths, curtainReduce, curtainIdle,
          dragReduce, dragIdle, hitTest, edgeScroll, DRAG,
-         readActivityCache, deriveMatches, applyMatchLinks, dismissMatch,
+         deriveMatches, applyMatchLinks, dismissMatch,
          actZoneMinutes, matchDate, backupExport, backupImport, zoneParity,
+         ICU, connReady, validateConn, icuRequest, icuError, proxyAllowed,
+         projectActivities, projectWellness, projectAthlete, benchmarksOf,
+         pickActivitySource, zoneParityFull, recovery, wellnessFlags,
+         emptyCache, V32_CACHE_KEY,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.9.4 · 2026-08-04";
+export const UI_BUILD = "next-0.10.0 · 2026-08-05";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
             monthOpen:false, monthYM:null,
             eq:[], warns:[], seen:new Set(), modeOpen:false,
-            view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[] };
+            view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[],
+            /* fas B: egen datapipeline */
+            cache:emptyCache(), src:null, athlete:null, bench:null, recov:null,
+            connMsg:null, syncing:false, syncMsg:null, lastSync:0 };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
     rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
 
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 const SPORTLABEL = { swim:"SIM", bike:"CYKEL", run:"LÖP", strength:"STYRKA" };
+const RECOV_DAYS = 30;                     /* speglar core.RECOV.baseDays i texten */
 const today = () => (globalThis.__TZ_TODAY ?? new Date().toISOString()).slice(0, 10);
 const now = () => {                        /* samma klocka som today() — även under test */
   const t = new Date().toISOString();
@@ -388,8 +396,80 @@ function eventLog(h) {
 }
 
 /* ---------- Inställningar: bindningar, paritet, backup, föräldralösa (T2, D7) ---------- */
+/* ---------- Anslutning (fas B §5.1) ---------- */
+function connSection(h) {
+  const c = S.cfg.conn ?? { apiKey: "", athleteId: "", historyDays: ICU.defHistory };
+  const r = connReady(c);
+  h.push(`<section class="setsec"><div class="eyebrow">intervals.icu</div>
+    <p class="hint">Nyckeln sparas bara i den här webbläsaren och skickas enbart till
+      intervals.icu — aldrig via mellanhand, aldrig till en säkerhetskopia.</p>
+    <div class="kv"><span class="k">Status</span>
+      <span class="v ${r.ready ? "ok" : ""}">${esc(r.why)}</span></div>
+    <label class="lfl"><span>API-nyckel <span class="dim">(Settings → Developer)</span></span>
+      <input type="password" id="connKey" value="${esc(c.apiKey ?? "")}" autocomplete="off"
+        placeholder="klistra in nyckeln"></label>
+    <label class="lfl"><span>Athlete-ID</span>
+      <input type="text" id="connId" value="${esc(c.athleteId ?? "")}" placeholder="i123456"
+        autocomplete="off" inputmode="text"></label>
+    <label class="lfl"><span>Historik <span class="dim">(dagar, ${ICU.minHistory}–${ICU.maxHistory})</span></span>
+      <input type="number" id="connDays" value="${Number(c.historyDays ?? ICU.defHistory)}"
+        min="${ICU.minHistory}" max="${ICU.maxHistory}" inputmode="numeric"></label>
+    <div class="acts"><button data-connsave>Spara anslutning</button>
+      <button class="ghostbtn" data-conntest>Testa anslutningen</button>
+      <button class="ghostbtn" data-sync ${S.syncing ? "disabled" : ""}>${S.syncing ? "Hämtar…" : "Uppdatera nu"}</button></div>
+    ${S.connMsg ? `<p class="hint ${S.connMsg.bad ? "bad" : "ok"}">${esc(S.connMsg.text)}</p>` : ""}
+    ${S.syncMsg ? `<p class="hint ${S.syncMsg.bad ? "bad" : "ok"}">${esc(S.syncMsg.text)}</p>` : ""}
+  </section>`);
+}
+
+/* ---------- Data: vad appen faktiskt har (fas B §5.2–5.4) ---------- */
+function dataSection(h) {
+  const c = S.cache ?? emptyCache();
+  const f = c.fetched ?? {};
+  const b = S.bench;
+  h.push(`<section class="setsec"><div class="eyebrow">Data</div>
+    <div class="kv">
+      <span class="k">Källa</span><span class="v ${S.src?.source === "next" ? "ok" : ""}">${esc(S.src?.why ?? "–")}</span>
+      <span class="k">Wellness</span><span class="v">${(c.wellness ?? []).length} dagar${f.wellness ? " · " + esc(f.wellness) : ""}</span>
+      <span class="k">Atletprofil</span><span class="v">${S.athlete ? Object.keys(S.athlete.sports ?? {}).length + " grenar" + (f.athlete ? " · " + esc(f.athlete) : "") : "inte hämtad"}</span>
+      <span class="k">Zonparitet</span><span class="v ${S.zpar?.ok ? "ok" : "bad"}">${esc(S.zpar?.why ?? "–")}</span>
+    </div>`);
+
+  if (b) h.push(`<div class="eyebrow" style="margin-top:12px">Benchmarks i intervals.icu</div>
+    <p class="hint">Läses härifrån, ändras aldrig här. Zoner och trösklar sätter du i intervals.icu — appen har medvetet inget eget register.</p>
+    <div class="kv">
+      <span class="k">FTP</span><span class="v">${b.ftp ?? "–"}${b.ftp ? " W" : ""}</span>
+      <span class="k">Tröskeltempo löp</span><span class="v">${esc(b.runThreshold ?? "–")}</span>
+      <span class="k">CSS sim</span><span class="v">${esc(b.css ?? "–")}</span>
+      <span class="k">LTHR löp / cykel</span><span class="v">${b.runLthr ?? "–"} / ${b.bikeLthr ?? "–"}</span>
+    </div>`);
+
+  const rc = S.recov;
+  if (rc?.has) {
+    const d = rc.day, t = rc.trend;
+    const line = (k, v, warn) => `<span class="k">${k}</span><span class="v ${warn ? "bad" : ""}">${v}</span>`;
+    h.push(`<div class="eyebrow" style="margin-top:12px">Återhämtning</div>
+      <p class="hint">Allt mäts mot din egen baslinje över ${RECOV_DAYS} dagar — aldrig mot ett absolut tal.</p>
+      <div class="kv">
+        ${d.rhr != null ? line("Vilopuls i morse", `${d.rhr} <span class="dim">(normal ${d.rhrBase})</span>`, d.flags.rhr) : ""}
+        ${d.sleepH != null ? line("Sömn senaste natten", `${d.sleepH} h <span class="dim">(normal ${d.sleepBase} h)</span>`, d.flags.sleep) : ""}
+        ${t.rhr7 != null ? line("Vilopuls 7 dagar", `${t.rhr7} <span class="dim">(bas ${t.rhrBase})</span>`, t.flags.rhr) : ""}
+        ${t.hrv != null ? line("HRV", `${t.hrv} ms <span class="dim">(bas ${t.hrvBase} ms)</span>`, t.flags.hrv) : ""}
+      </div>`);
+  } else if ((c.wellness ?? []).length) {
+    h.push(`<p class="hint">För lite wellnessdata för baslinjer än — signalerna tiger hellre än gissar.</p>`);
+  }
+  h.push(`<div class="acts" style="margin-top:10px">
+    <button class="ghostbtn" data-clearcache>Rensa datacachen</button></div>
+    <p class="hint">Cachen är återskapbar med en hämtning och ingår därför aldrig i säkerhetskopian.</p>
+  </section>`);
+}
+
 function renderSettings(h) {
   h.push(`<header class="viewhead"><span class="wm">TRIZONE</span><h1>Inställningar</h1></header>`);
+
+  connSection(h);
+  dataSection(h);
 
   h.push(`<section class="setsec"><div class="eyebrow">Motorvärden</div>
     <p class="hint">Dina gränser, inte appens sanningar. Tomt fält = standardvärdet.</p>`);
@@ -553,6 +633,80 @@ function sheet(s) {
 }
 
 /* ---------- Matchning: härled, auto-länka, spara (§5c) ---------- */
+/* ================================================================
+   HÄMTNING (fas B) — tunt lager. All bedömning bor i core.
+   Nyckeln lämnar aldrig webbläsaren: proxyAllowed vaktar det i kod,
+   inte i kommentar. Anropet går direkt till intervals.icu, som v32
+   har bevisat fungerar från GitHub Pages.
+   ================================================================ */
+const SYNC_COOLDOWN_MS = 15 * 60 * 1000;      /* auto vid boot, max var 15:e minut */
+
+async function icuFetch(conn, kind) {
+  const req = icuRequest(conn, kind, today());
+  if (req.error) return { error: req.error };
+  if (proxyAllowed(req.headers)) return { error: "internt fel: auth-header saknas — anropet stoppat" };
+  try {
+    const r = await fetch(req.url, { headers: req.headers });
+    if (!r.ok) return { error: icuError(r.status, kind) };
+    return { data: await r.json() };
+  } catch (e) {
+    return { error: `${kind}: ${e.message} — troligen nätverk eller CORS. Cachen gäller tills vidare.` };
+  }
+}
+
+async function syncNow({ auto = false } = {}) {
+  const r = connReady(S.cfg.conn);
+  if (!r.ready) { if (!auto) { S.syncMsg = { text: r.why, bad: true }; render(); } return; }
+  if (S.syncing) return;
+  if (auto && Date.now() - S.lastSync < SYNC_COOLDOWN_MS) return;
+  S.syncing = true; S.syncMsg = { text: "Hämtar från intervals.icu…" }; if (!auto) render();
+
+  const [a, w, p] = await Promise.all([          /* ett trasigt anrop sänker aldrig de andra */
+    icuFetch(S.cfg.conn, "activities"),
+    icuFetch(S.cfg.conn, "wellness"),
+    icuFetch(S.cfg.conn, "athlete")]);
+
+  const patch = {}, fails = [], notes = [];
+  if (a.data) { const pr = projectActivities(a.data);
+    if (pr.error) fails.push("aktiviteter: " + pr.error);
+    else { patch.activities = pr.activities;
+           notes.push(`${pr.activities.length} aktiviteter` + (pr.dropped ? ` (${pr.dropped} okända förkastade)` : "")); } }
+  else fails.push(a.error);
+  if (w.data) { const pr = projectWellness(w.data);
+    if (pr.error) fails.push("wellness: " + pr.error);
+    else { patch.wellness = pr.wellness; notes.push(`${pr.wellness.length} wellnessdagar`); } }
+  else fails.push(w.error);
+  if (p.data) { const pr = projectAthlete(p.data);
+    if (!pr.error) { patch.athlete = pr.athlete; notes.push(`${pr.sportCount} grenar i profilen`); } }
+  /* atletprofilen är ren förbättring — den får fela tyst (v32:s val, ärvt) */
+
+  S.syncing = false;
+  S.lastSync = Date.now();
+  if (Object.keys(patch).length) {
+    const res = S.store.saveCache(S.cache, patch, today(), S.cfg.conn.historyDays ?? ICU.defHistory);
+    if (res.cache) S.cache = res.cache;
+    if (!res.ok) fails.push(res.error);
+    else if (res.degraded) fails.push(res.error);
+  }
+  S.syncMsg = { text: (notes.length ? "Hämtat: " + notes.join(" · ") : "Inget hämtat") +
+                      (fails.length ? " — " + fails.join(" · ") : ""),
+                bad: !!fails.length };
+  refreshData();
+  render();
+}
+
+/* Läser om allt som hänger på cachen. Anropas efter hämtning och vid boot. */
+function refreshData() {
+  const src = pickActivitySource(S.cache, window.localStorage.getItem(V32_CACHE_KEY));
+  S.acts = src.activities;
+  S.src = src;
+  S.athlete = S.cache.athlete ?? null;
+  S.bench = S.athlete ? benchmarksOf(S.athlete) : null;
+  S.recov = (S.cache.wellness ?? []).length ? recovery(S.cache.wellness, today()) : null;
+  S.zpar = S.athlete ? zoneParityFull(S.athlete, src.activities) : zoneParity(src.activities);
+  if (S.plan) { recomputeMatches(); runEngine(); }
+}
+
 function recomputeMatches() {
   if (!S.acts.length) { S.mq = []; S.unplanned = []; return; }
   const r = deriveMatches(S.plan, S.overlay, S.acts);
@@ -582,14 +736,16 @@ function runEngine({ apply = true } = {}) {
   if (changes.length) recomputeMatches();
 }
 
-/* Flaggor appen kan härleda själv idag. Wellness-baserade flaggor
-   (RHR, HRV, sömn) tillkommer med egen datapipeline — inga låtsasflaggor. */
+/* Flaggor appen härleder själv. Wellness-flaggorna (fas B, alternativ C):
+   dagssignal → sleep-guard (nivå 1, frågar) · trend → recovery-watch (nivå 3, varnar).
+   Utan wellnessdata produceras inga flaggor — appen hittar aldrig på. */
 function engineFlags() {
   const f = [];
   for (const [id, so] of Object.entries(S.overlay?.sessions ?? {})) {
     const r = so.rpe ?? (so.match ? actById(so.match.activityId)?.icu_rpe : null);
     if (r != null && r >= 9) f.push({ id: "rpe-watch", sessionId: id });
   }
+  f.push(...wellnessFlags(S.cache?.wellness ?? [], today()));
   return f;
 }
 
@@ -775,7 +931,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -843,6 +999,44 @@ function wire() {
       if (r.ok) { S.cfg = next; S.note = { text: "Motorvärden sparade." }; runEngine({ apply: false }); }
       else S.note = { text: r.error, bad: true };
       render(); return;
+    }
+    /* ---------- Anslutning (fas B) ---------- */
+    if (t.dataset.connsave != null) {
+      const raw = { apiKey: (document.getElementById("connKey")?.value ?? "").trim(),
+                    athleteId: (document.getElementById("connId")?.value ?? "").trim(),
+                    historyDays: Number(document.getElementById("connDays")?.value) || ICU.defHistory };
+      const v = validateConn(raw);
+      if (!v.ok) { S.connMsg = { text: "Avvisat — " + v.errors.map(e => e.why).join(" · "), bad: true };
+                   render(); return; }
+      const next = { ...S.cfg, conn: raw };
+      const r = S.store.saveCfg(next);
+      if (!r.ok) { S.connMsg = { text: r.error, bad: true }; render(); return; }
+      S.cfg = next;
+      S.connMsg = { text: connReady(raw).ready
+        ? "Anslutningen sparad. Tryck Testa anslutningen för att bekräfta mot intervals.icu."
+        : "Sparat — " + connReady(raw).why };
+      render(); return;
+    }
+    if (t.dataset.conntest != null) {
+      const r = connReady(S.cfg.conn);
+      if (!r.ready) { S.connMsg = { text: r.why, bad: true }; render(); return; }
+      S.connMsg = { text: "Testar…" }; render();
+      icuFetch(S.cfg.conn, "athlete").then(res => {
+        if (res.error) { S.connMsg = { text: res.error, bad: true }; render(); return; }
+        const p = projectAthlete(res.data);
+        S.connMsg = { text: `Anslutningen fungerar — ${p.athlete?.name ?? "atlet"} `
+          + `(${p.sportCount} grenar med inställningar). Tryck Uppdatera nu för att hämta data.` };
+        render();
+      });
+      return;
+    }
+    if (t.dataset.sync != null) { syncNow(); return; }
+    if (t.dataset.clearcache != null) {
+      const r = S.store.clearCache();
+      S.cache = emptyCache();
+      S.syncMsg = { text: r.ok ? "Datacachen rensad. Hämta om för att fylla den igen."
+                                : r.error, bad: !r.ok };
+      refreshData(); render(); return;
     }
     if (t.dataset.adjopen) { S.adjOpen = t.dataset.adjopen; S.logOpen = null; render(); return; }
     if (t.dataset.adjcancel != null) { S.adjOpen = null; render(); return; }
@@ -1110,18 +1304,21 @@ async function boot() {
     const ws = planWeeks(S.plan);
     S.week = ws.find(w => weekView(S.plan, S.overlay, w).days.some(d => d.date === today())) ?? ws[0];
 
-    /* Utfall: v32:s aktivitetscache, READ-ONLY (beslut 2026-08-02) */
-    const cr = readActivityCache(window.localStorage.getItem("trizone.cache.v1"));
-    S.acts = cr.activities;
-    S.zpar = zoneParity(cr.activities);
-    row("zonparitet", S.zpar.why, S.zpar.ok ? "ok" : "bad");
-    const nRpe = cr.activities.filter(a => a.icu_rpe != null || a.perceived_exertion != null).length;
-    row("aktiviteter", cr.error ? cr.error
-        : `${cr.activities.length} lästa ur v32-cachen (${cr.path}, read-only)`
-          + ` · RPE i ${nRpe} av dem`,
-        cr.error ? "" : "ok");
-    recomputeMatches();
-    runEngine();
+    /* Utfall (fas B): egen cache först, v32 read-only bara när egen är tom */
+    { const lc = S.store.loadCache();
+      S.cache = lc.cache;
+      if (lc.error) row("datacache", lc.error, "bad");
+      refreshData();
+      const nRpe = S.acts.filter(a => a.icu_rpe != null || a.perceived_exertion != null).length;
+      row("aktiviteter", `${S.src.why} · RPE i ${nRpe} av dem`,
+          S.src.source === "next" ? "ok" : S.src.source === "v32" ? "" : "bad");
+      row("zonparitet", S.zpar.why, S.zpar.ok ? "ok" : "bad");
+      const rc = S.recov;
+      row("wellness", (S.cache.wellness ?? []).length
+            ? `${S.cache.wellness.length} dagar · ${rc?.has ? "baslinjer klara" : "för tunt underlag för baslinjer"}`
+            : "ingen wellnessdata — anslut i Inställningar",
+          (S.cache.wellness ?? []).length ? "ok" : "");
+    }
   }
 
   row("haptik", hapticRow(), hapticLog.api ? "" : "bad");
@@ -1131,5 +1328,8 @@ async function boot() {
   wireMonthSwipe(app());
   render();
   document.getElementById("wk-" + S.week)?.scrollIntoView();
+  /* Auto-hämtning efter första ritningen: appen är användbar direkt ur cachen,
+     nätet får ta den tid det tar. Cooldown i syncNow (15 min). */
+  if (connReady(S.cfg.conn).ready) syncNow({ auto: true });
 }
 boot();

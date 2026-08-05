@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.9.4 · 2026-08-04
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.10.0 · 2026-08-05
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.9.4 · 2026-08-04" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.10.0 · 2026-08-05" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -57,7 +57,40 @@ Object.defineProperty(globalThis, "navigator", {
   value: { clipboard: { writeText: async t => { clipped = t; } },
            vibrate: p => (vibes.push(p), true) }, configurable: true });
 globalThis.location = { protocol: "file:" };
-globalThis.fetch = async () => ({ json: async () => plan });
+/* Fas B: nätverksstub. Spelar in varje anrop så att URL, headers och
+   nyckelläckage kan granskas — nätet nås aldrig på riktigt härifrån. */
+const icuCalls = [];
+const icuState = { status: 200, throwOn: null };
+const wellDay = (i) => {                       /* 35 dygn fram t.o.m. 2026-10-15 */
+  const d = new Date(Date.UTC(2026, 8, 11)); d.setUTCDate(d.getUTCDate() + i);
+  return d.toISOString().slice(0, 10);
+};
+/* Sista veckan förhöjd: dagssignalen OCH trendsignalen fyrar båda (alternativ C) */
+const ICU_WELLNESS = Array.from({ length: 35 }, (_, i) => ({
+  id: wellDay(i), restingHR: i >= 28 ? 56 : 48, hrv: 62, sleepSecs: 6.4 * 3600 }));
+const ICU_ACTIVITIES = [
+  { id: 901, type: "Run", name: "Löpintervaller tröskel", start_date_local: "2026-10-15T18:05:00",
+    moving_time: 52 * 60, distance: 10400, icu_hr_zone_times: [720, 360, 120, 1500, 420],
+    icu_rpe: 6, feel: 4, kudos_count: 9 },
+  { id: 902, type: "Ride", name: "Kort cykel", start_date_local: "2026-10-16T18:00:00",
+    moving_time: 100 * 60, distance: 50000 },
+  { id: 903, type: "Swim", name: "Morgonsim", start_date_local: "2026-10-16T06:40:00",
+    moving_time: 30 * 60, distance: 1500 },
+  { id: 904, type: "Run", name: "Egen extraløpning", start_date_local: "2026-10-17T07:00:00",
+    moving_time: 40 * 60, distance: 8000 }];
+const ICU_ATHLETE = { id: "i123456", name: "Niklas", icu_ftp: 262, sportSettings: [
+  { types: ["Ride", "VirtualRide"], hr_zones: [120, 140, 155, 168, 185], lthr: 168, ftp: 262 },
+  { types: ["Run"], hr_zones: [128, 148, 162, 173, 190], lthr: 173, threshold_pace: 2.967 },
+  { types: ["Swim"], threshold_pace: 0.8065 } ] };
+globalThis.fetch = async (url, opts) => {
+  if (!String(url).includes("intervals.icu")) return { ok: true, status: 200, json: async () => plan };
+  icuCalls.push({ url: String(url), headers: opts?.headers ?? {} });
+  if (icuState.throwOn && String(url).includes(icuState.throwOn)) throw new Error("Failed to fetch");
+  if (icuState.status !== 200) return { ok: false, status: icuState.status, json: async () => ({}) };
+  const body = String(url).includes("/activities") ? ICU_ACTIVITIES
+             : String(url).includes("/wellness") ? ICU_WELLNESS : ICU_ATHLETE;
+  return { ok: true, status: 200, json: async () => body };
+};
 globalThis.CSS = { escape: s => s };
 globalThis.requestAnimationFrame = () => 0;
 globalThis.cancelAnimationFrame = () => {};
@@ -276,7 +309,11 @@ ok(!els.app.innerHTML.includes('data-nav="logg"'), "Logg-fliken är borttagen (b
 has(els.app.innerHTML, 'data-nav="installningar"', "fliken Inställningar finns");
 
 clickBtn({ nav: "installningar" });
-has(els.app.innerHTML, "next-0.9.4", "byggstämpeln bor i Inställningar (T2)");
+/* Stämpeln läses ur koden, inte ur en hårdkodad sträng: testet ska fånga
+   BRUTEN PARITET, inte tvinga fram en handpålagd redigering vid varje bump. */
+const STAMP = (await import("./ui.js")).UI_BUILD;
+has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
+ok(STAMP === "next-0.10.0 · 2026-08-05", "stämpeln i ui.js är den väntade för denna release");
 has(els.app.innerHTML, ">TRIZONE<", "wordmark bor i Inställningar, inte i appkromet");
 ok(!els.app.innerHTML.includes("Livsschema"), "livsschema-editorn är borttagen (beslut 0.9.1)");
 has(els.app.innerHTML, "data-evlog", "händelseloggen nås via knapp i Inställningar");
@@ -417,6 +454,148 @@ has(els.app.innerHTML, "impbox", "importpanelen öppnas");
 els.impbox = { value: clipped };
 fire("click", { target: target({ importGo: "" }, ["data-import-go"]) });
 has(els.app.innerHTML, "Importerad", "rundturen export → import fungerar i vyn");
+
+/* ================================================================
+   FAS B — anslutning, hämtning, fallback, wellness (0.10.0)
+   ================================================================ */
+clickBtn({ nav: "installningar" });
+has(els.app.innerHTML, "intervals.icu", "anslutningssektionen finns i Inställningar");
+has(els.app.innerHTML, "ingen anslutning konfigurerad", "utan anslutning sägs det rakt ut");
+has(els.app.innerHTML, "Testa anslutningen", "testknappen finns");
+has(els.app.innerHTML, 'type="password"', "API-nyckeln skrivs i lösenordsfält, inte i klartext");
+has(els.app.innerHTML, "aldrig till en säkerhetskopia", "det sägs var nyckeln INTE hamnar");
+has(els.app.innerHTML, "read-only", "före anslutning läses v32-cachen och det redovisas");
+
+/* Fallback: utan egen cache gäller v32 — men bara då */
+has(els.app.innerHTML, "v32-cachen", "källraden namnger v32 som nuvarande källa");
+has(els.app.innerHTML, "ingen wellnessdata", "wellness saknas och det syns");
+
+/* Anslutningen avvisar skräp innan den sparas */
+els.connKey = { value: "abcdefghijkl" }; els.connId = { value: "gurka" }; els.connDays = { value: "370" };
+clickBtn({ connsave: "" });
+has(els.app.innerHTML, "i123456", "ogiltigt athlete-ID avvisas med väntat format");
+ok(!mem.has("trizone.next.cfg.v1") || !JSON.parse(mem.get("trizone.next.cfg.v1")).conn?.athleteId,
+   "avvisad anslutning skrivs aldrig till lagringen");
+
+els.connKey = { value: "kort" }; els.connId = { value: "i123456" };
+clickBtn({ connsave: "" });
+has(els.app.innerHTML, "Developer", "för kort nyckel säger var den riktiga hämtas");
+
+/* Giltig anslutning sparas */
+els.connKey = { value: "hemlignyckel1234" }; els.connId = { value: "i123456" }; els.connDays = { value: "370" };
+clickBtn({ connsave: "" });
+has(els.app.innerHTML, "Anslutningen sparad", "giltig anslutning sparas");
+ok(JSON.parse(mem.get("trizone.next.cfg.v1")).conn.apiKey === "hemlignyckel1234",
+   "anslutningen ligger i cfg — bredvid bindningarna (D7)");
+
+/* Testknappen slår mot atletprofilen och rapporterar namn */
+clickBtn({ conntest: "" });
+await new Promise(r => setTimeout(r, 20));
+has(els.app.innerHTML, "Anslutningen fungerar", "testknappen bekräftar mot riktigt svar");
+has(els.app.innerHTML, "3 grenar", "testet redovisar vad som faktiskt hittades");
+ok(icuCalls.length === 1 && icuCalls[0].url.endsWith("/athlete/i123456"),
+   "testknappen hämtar bara profilen — inte hela historiken");
+
+/* SÄKERHET: nyckeln i header, aldrig i URL, aldrig via mellanhand */
+ok(icuCalls[0].headers.Authorization?.startsWith("Basic "),
+   "SÄKERHET: anropet bär Basic-auth i header");
+ok(!icuCalls.some(c => c.url.includes("hemlignyckel")),
+   "SÄKERHET: nyckeln hamnar aldrig i en URL");
+
+/* Hämtning: tre anrop, egen cache skrivs, källan byter */
+clickBtn({ sync: "" });
+await new Promise(r => setTimeout(r, 30));
+ok(icuCalls.length === 4, "Uppdatera nu gör exakt tre anrop (aktiviteter, wellness, profil)");
+ok(icuCalls.some(c => c.url.includes("/activities?oldest=")), "aktivitetsanropet bär historikfönstret");
+ok(mem.has("trizone.next.cache.v1"), "hämtningen skriver till EGEN cachenyckel");
+{ const c = JSON.parse(mem.get("trizone.next.cache.v1"));
+  ok(c.activities.length === 4, "alla aktiviteter projiceras in");
+  ok(!("kudos_count" in c.activities.find(a => a.id === 901)),
+     "okända fält vitlistas bort på vägen in (F5)");
+  ok(c.activities.find(a => a.id === 901).icu_rpe === 6, "icu_rpe följer med i egen projektion");
+  ok(c.wellness.length === 35, "wellness cachas");
+  ok(c.athlete.sports.run.lthr === 173, "atletprofilen cachas med zoner och LTHR");
+  ok(c.fetched.activities === "2026-10-15", "hämtningstidpunkten stämplas"); }
+ok(!JSON.parse(mem.get("trizone.cache.v1")).__touched,
+   "v32:s cache skrivs ALDRIG — den läses read-only");
+
+has(els.app.innerHTML, "Hämtat:", "synken redovisar vad som hämtades");
+has(els.app.innerHTML, "egen cache", "källan har bytt till egen cache");
+has(els.app.innerHTML, "35 dagar", "wellnessdagarna redovisas");
+
+/* Benchmarks läses ur profilen — och ändras aldrig här */
+has(els.app.innerHTML, "262", "FTP läses ur intervals.icu-profilen");
+has(els.app.innerHTML, "5:37/km", "tröskeltempot avkodas ur m/s");
+has(els.app.innerHTML, "2:04/100 m", "CSS avkodas ur simmens tröskel");
+has(els.app.innerHTML, "ändras aldrig här", "appen är läsare, inte register — zoner sätts i intervals.icu");
+
+/* Full zonparitet mot profilens faktiska gränser */
+has(els.app.innerHTML, "zonparitet mot intervals.icu", "pariteten granskas mot profilen, inte bara vektorlängd");
+has(els.app.innerHTML, "LTHR 173", "zongränsernas ursprung redovisas granskningsbart");
+
+/* Återhämtning: alternativ C, egen baslinje */
+has(els.app.innerHTML, "Vilopuls i morse", "dagssignalen visas");
+has(els.app.innerHTML, "normal 48", "baslinjen är HANS egen, inte ett absolut tal");
+has(els.app.innerHTML, "din egen baslinje", "det sägs uttryckligen att måttet är relativt");
+
+/* Alternativ C i UI: trendsignalen VARNAR (nivå 3), dagssignalen FRÅGAR (nivå 1) */
+clickBtn({ nav: "idag" });
+has(els.app.innerHTML, "Motorn varnar", "trendsignalen når varningstrappan");
+has(els.app.innerHTML, "recovery-watch", "trendvarningen namnger sin regel");
+has(els.app.innerHTML, "Volym går bra", "varningen säger vad man KAN göra, inte bara vad som är fel");
+has(els.app.innerHTML, "Nivå 3 ändrar aldrig planen", "trendsignalen rör aldrig planen");
+ok(!JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-run-thr"]?.events
+     ?.some(e => e.rule === "sleep-guard" || e.rule === "recovery-watch"),
+   "varken dags- eller trendsignal ändrar overlayn på egen hand (D2, H1)");
+
+/* Dagssignalen frågar bara när dagen faktiskt bär ett kvalitetspass.
+   Här ligger torsdagens A-pass flyttat till fredag av ett tidigare test —
+   motorn läser det ÖVERLAGRADE läget, inte källplanens dag. Det är regeln
+   som fungerar, inte ett bortfall: en fråga om ett pass som inte ligger idag
+   vore precis det tjat den externa granskningen varnade för. */
+ok(!els.app.innerHTML.includes("Sov du dåligt"),
+   "sleep-guard tiger när dagen saknar kvalitetspass — motorn läser överlagrat läge");
+
+/* Nyckeln följer aldrig med säkerhetskopian */
+clickBtn({ nav: "installningar" });
+fire("click", { target: target({ backup: "" }, ["data-backup"]) });
+await new Promise(r => setTimeout(r, 10));
+ok(!String(clipped).includes("hemlignyckel"),
+   "SÄKERHET: API-nyckeln finns inte i säkerhetskopian");
+ok(JSON.parse(clipped).cfg.conn.athleteId === "i123456",
+   "athlete-ID följer med — det är inte hemligt");
+ok(JSON.parse(mem.get("trizone.next.cfg.v1")).conn.apiKey === "hemlignyckel1234",
+   "exporten muterar inte den sparade anslutningen");
+
+/* Fel från API:et pekar på rotorsak och dödar aldrig appen */
+icuState.status = 401;
+clickBtn({ sync: "" });
+await new Promise(r => setTimeout(r, 30));
+has(els.app.innerHTML, "nyckeln avvisades", "401 förklaras som fel nyckel, inte 'något gick fel'");
+ok(JSON.parse(mem.get("trizone.next.cache.v1")).activities.length === 4,
+   "misslyckad hämtning lämnar den gamla cachen orörd");
+icuState.status = 200;
+
+icuState.throwOn = "/wellness";
+clickBtn({ sync: "" });
+await new Promise(r => setTimeout(r, 30));
+has(els.app.innerHTML, "Hämtat:", "ett trasigt anrop sänker inte de andra");
+ok(JSON.parse(mem.get("trizone.next.cache.v1")).wellness.length === 35,
+   "wellness-facket behåller sitt gamla värde när dess anrop failar (patch-semantik)");
+icuState.throwOn = null;
+
+/* Cachen går att rensa — och då gäller v32 igen */
+clickBtn({ clearcache: "" });
+ok(!mem.has("trizone.next.cache.v1"), "datacachen går att rensa");
+has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på v32 igen");
+
+/* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
+   2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
+const EXPECTED_MIN = 195;
+if (pass + fail < EXPECTED_MIN) {
+  console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
+  fail++;
+}
 
 console.log(`\n${pass}/${pass+fail} röktester gröna` + (fail ? ` — ${fail} RÖDA` : ""));
 process.exit(fail ? 1 : 0);

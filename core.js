@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.9.4 · 2026-08-04";
+export const BUILD = "next-0.10.0 · 2026-08-05";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -407,7 +407,8 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     if (!targets.length) continue;
     if (f.source === "derived") {
       questions.push({ rule: "sleep-guard", sessions: targets.map(s => s.id),
-        ask: "Vilopulsen ligger högt över baslinjen — sov du dåligt? Dagens kvalitetspass föreslås växlas ned till Z2." });
+        ask: (f.why ? f.why + ". " : "Vilopulsen ligger högt över baslinjen. ") +
+             "Sov du dåligt? Dagens kvalitetspass föreslås växlas ned till Z2." });
       continue;
     }
     for (const s of targets) {
@@ -556,6 +557,12 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
       action: "warn", why: `Veckan under ${Math.round(cfg.lowShareTarget * 100)} % lågintensivt — överväg att sänka ett pass.`, payload: {}, orig: {}, t: now, week: f.week });
     if (f.id === "rpe-watch") lvl3.push({ rule: "rpe-watch", level: 3, session: f.sessionId ?? null,
       action: "warn", why: "RPE ≥ 9 loggat — nästa kvalitetspass granskas mot återhämtning.", payload: {}, orig: {}, t: now });
+    /* recovery-watch (fas B): trendsignalen talar, ändrar aldrig. Dagssignalen
+       går separat väg via sleep-guard (nivå 1). Beslut fas B, alternativ C. */
+    if (f.id === "recovery-watch") lvl3.push({ rule: "recovery-watch", level: 3, session: null,
+      action: "warn", why: (f.why ? f.why + " — " : "") +
+        "kroppen är inte färdig med gårdagen. Volym går bra; spara kvaliteten tills det vänder.",
+      payload: {}, orig: {}, t: now });
     if (f.id === "duration-drift") lvl3.push({ rule: "duration-drift", level: 3, session: f.sessionId ?? null,
       action: "warn", why: `Utfall > ${cfg.driftPct} % av planerad duration — räknas mot veckovolymen.`, payload: {}, orig: {}, t: now, week: f.week });
   }
@@ -659,14 +666,20 @@ export function deactivateMode(overlay, key, now = "") {
    ================================================================ */
 
 export const KEYS = { plan: "trizone.plan.v1", overlay: "trizone.overlay.v1",
-                      cfg: "trizone.next.cfg.v1" };   /* cfg: beslut 0.7.0 — bindningar (D7) */
+                      cfg: "trizone.next.cfg.v1",     /* cfg: beslut 0.7.0 — bindningar (D7) */
+                      cache: "trizone.next.cache.v1" };  /* fas B: egen projektion, egen nyckel */
+
+/* v32:s cache — läses READ-ONLY och bara när egen cache är tom (fas B §5.5).
+   Skrivs aldrig härifrån. Städning beslutas när v32 arkiveras, inte före. */
+export const V32_CACHE_KEY = "trizone.cache.v1";
 
 /* Livsschemats default — profildata, överstyrs i Inställningar (D7).
    Schemat FRAMHÄVER träningsdagar och matar missed-A — det spärrar aldrig. */
 export const DEFAULT_CFG = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:["Kväll"], 3:["Kväll"],
                                          4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] },
                              athlete: null,          /* null = ingen vakt; sätts vid första planläsning */
-                             engine: {} };           /* överstyr ENGINE-defaults (P2: uppsättningen är data) */
+                             engine: {},             /* överstyr ENGINE-defaults (P2: uppsättningen är data) */
+                             conn: { apiKey: "", athleteId: "", historyDays: 370 } };  /* fas B: anslutningen */
 
 /* Redigerbara motorvärden med gränser — allt annat i ENGINE är kodkonstant */
 export const ENGINE_FIELDS = {
@@ -702,7 +715,98 @@ export function validateCfg(cfg) {
         errors.push({ where: `schedule.${d}`, why: `okänt fönster (väntat ${WINDOWS.join(" | ")})` });
     }
   }
+  if (cfg.conn !== undefined) {
+    if (typeof cfg.conn !== "object" || cfg.conn === null)
+      errors.push({ where: "cfg.conn", why: "inte ett objekt" });
+    else for (const e of validateConn(cfg.conn).errors) errors.push(e);
+  }
   return { ok: !errors.length, errors };
+}
+
+/* ================================================================
+   ANSLUTNING TILL intervals.icu (fas B §5.1)
+   Rena funktioner: URL och headers byggs och testas utan nät.
+   Nätverkslagret i ui.js är tunt och dumt — all bedömning bor här.
+   ================================================================ */
+
+export const ICU = { base: "https://intervals.icu/api/v1/athlete",
+                     defHistory: 370, minHistory: 30, maxHistory: 400, minKey: 12 };
+
+/* athlete-ID: intervals.icu skriver det "i123456"; rena siffror accepteras också */
+const ID_RE = /^i?\d{3,12}$/;
+
+export function validateConn(conn) {
+  const errors = [];
+  if (!conn || typeof conn !== "object")
+    return { ok: false, errors: [{ where: "conn", why: "inte ett objekt" }] };
+  const key = conn.apiKey ?? "", id = conn.athleteId ?? "";
+  if (typeof key !== "string") errors.push({ where: "conn.apiKey", why: "måste vara text" });
+  if (typeof id !== "string") errors.push({ where: "conn.athleteId", why: "måste vara text" });
+  if (typeof id === "string" && id.trim() && !ID_RE.test(id.trim()))
+    errors.push({ where: "conn.athleteId",
+      why: `"${id}" ser inte ut som ett athlete-ID (väntat i123456 eller 123456)` });
+  if (typeof key === "string" && key.trim() && key.trim().length < ICU.minKey)
+    errors.push({ where: "conn.apiKey",
+      why: "nyckeln är för kort — kopiera hela från intervals.icu → Settings → Developer" });
+  if (conn.historyDays !== undefined) {
+    const d = conn.historyDays;
+    if (typeof d !== "number" || !Number.isFinite(d) || d < ICU.minHistory || d > ICU.maxHistory)
+      errors.push({ where: "conn.historyDays", why: `utanför ${ICU.minHistory}–${ICU.maxHistory} dagar` });
+  }
+  return { ok: !errors.length, errors };
+}
+
+/* Halvifylld anslutning är inte ett fel — den är bara inte klar än. */
+export function connReady(conn) {
+  const key = (conn?.apiKey ?? "").trim(), id = (conn?.athleteId ?? "").trim();
+  if (!key && !id) return { ready: false, why: "ingen anslutning konfigurerad" };
+  if (!key) return { ready: false, why: "API-nyckel saknas" };
+  if (!id) return { ready: false, why: "athlete-ID saknas" };
+  const v = validateConn(conn);
+  if (!v.ok) return { ready: false, why: v.errors.map(e => e.why).join(" · ") };
+  return { ready: true, why: `ansluten som ${id}` };
+}
+
+const b64 = s => typeof btoa === "function" ? btoa(s)
+  : typeof Buffer !== "undefined" ? Buffer.from(s, "binary").toString("base64") : s;
+
+const dayShift = (iso, n) => {
+  const d = new Date(String(iso).slice(0, 10) + "T00:00:00Z");
+  if (isNaN(d)) return null;
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/* (conn, kind, todayISO) → { url, headers } · kind: activities | wellness | athlete */
+export function icuRequest(conn, kind, todayISO) {
+  const r = connReady(conn);
+  if (!r.ready) return { error: r.why };
+  const id = encodeURIComponent(conn.athleteId.trim());
+  const days = conn.historyDays ?? ICU.defHistory;
+  const headers = { Authorization: "Basic " + b64("API_KEY:" + conn.apiKey.trim()) };
+  const oldest = dayShift(todayISO, -days);
+  if (!oldest) return { error: `ogiltigt datum: ${todayISO}` };
+  if (kind === "activities")
+    return { url: `${ICU.base}/${id}/activities?oldest=${oldest}&newest=${dayShift(todayISO, 1)}`, headers };
+  if (kind === "wellness")
+    return { url: `${ICU.base}/${id}/wellness?oldest=${oldest}&newest=${todayISO}`, headers };
+  if (kind === "athlete")
+    return { url: `${ICU.base}/${id}`, headers };
+  return { error: `okänd hämtningstyp: ${kind}` };
+}
+
+/* v32:s säkerhetsregel, ärvd oavkortad: ett anrop som bär Authorization får
+   ALDRIG gå via proxy — då skickas nyckeln till proxyägaren. */
+export const proxyAllowed = (headers) => !(headers && headers.Authorization);
+
+/* Fel pekar på rotorsak, inte på symptom (F4) */
+export function icuError(status, kind) {
+  if (status === 401) return `${kind}: 401 — API-nyckeln avvisades. Kopiera om den från intervals.icu → Settings → Developer.`;
+  if (status === 403) return `${kind}: 403 — nyckeln gäller men inte för det här athlete-ID:t. Kontrollera ID:t.`;
+  if (status === 404) return `${kind}: 404 — athlete-ID:t finns inte. Väntat format i123456.`;
+  if (status === 429) return `${kind}: 429 — för många anrop. Vänta en stund och hämta om.`;
+  if (status >= 500) return `${kind}: ${status} — intervals.icu svarar inte just nu. Cachen gäller tills vidare.`;
+  return `${kind}: HTTP ${status}`;
 }
 
 export const byteSize = s => new TextEncoder().encode(String(s ?? "")).length;
@@ -723,6 +827,25 @@ export function trimPlan(plan) {
   });
   if (plan.changelog) p.changelog = plan.changelog.slice(-5);
   return p;
+}
+
+/* ---------- Egen datacache (fas B §5.2) ----------
+   EN nyckel, tre sektioner. De hämtas i samma svep, delar färskhet och hör ihop;
+   tre nycklar hade gett tre kvotpunkter utan vinst (beslut fas B, produktägaren).
+   Skrivningen är degraderande: vid kvotfel trimmas historiken bakifrån och
+   försöket görs om, i stället för att allt-eller-inget faller. */
+export const CACHE_VERSION = 1;
+export const emptyCache = () => ({ v: CACHE_VERSION, activities: [], wellness: [], athlete: null,
+                                   fetched: { activities: null, wellness: null, athlete: null } });
+
+/* Behåll bara det som ligger inom historikfönstret */
+export function trimCache(cache, todayISO, days = ICU.defHistory) {
+  const cut = dayShift(todayISO, -days);
+  const c = { ...emptyCache(), ...(cache ?? {}) };
+  if (!cut) return c;
+  return { ...c,
+    activities: (c.activities ?? []).filter(a => String(a.start_date_local ?? "").slice(0, 10) >= cut),
+    wellness:   (c.wellness   ?? []).filter(w => String(w.id ?? "").slice(0, 10) >= cut) };
 }
 
 export const emptyOverlay = (planVersion = null) =>
@@ -879,6 +1002,48 @@ export function makeStore(storage) {
       if (w.ok) blocked = null;
       return w;
     },
+
+    /* ---------- Egen datacache (fas B) ----------
+       Trasig cache blockerar aldrig appen: tom cache gäller och felet redovisas.
+       Cachen är återskapbar med ett anrop — den ingår därför aldrig i backup. */
+    loadCache() {
+      const r = readJson(KEYS.cache);
+      if (r.missing) return { cache: emptyCache(), error: null, stored: false };
+      if (r.error) return { cache: emptyCache(), error: r.error, stored: false };
+      const c = r.value;
+      if (!c || typeof c !== "object" || !Array.isArray(c.activities))
+        return { cache: emptyCache(), error: "cachen har okänd form — tom cache gäller, hämta om", stored: false };
+      if (c.v !== CACHE_VERSION)
+        return { cache: emptyCache(),
+                 error: `cachens format är ${c.v ?? "okänt"} (appen läser ${CACHE_VERSION}) — hämta om`, stored: false };
+      return { cache: { ...emptyCache(), ...c }, error: null, stored: true };
+    },
+
+    /* patch: { activities?, wellness?, athlete? } — fack utan värde lämnas orörda,
+       så ett trasigt anrop aldrig raderar de två som gick igenom. */
+    saveCache(cache, patch = {}, todayISO = "", days = ICU.defHistory) {
+      let next = { ...emptyCache(), ...(cache ?? {}) };
+      next.fetched = { ...next.fetched };
+      for (const k of ["activities", "wellness", "athlete"]) {
+        if (patch[k] === undefined) continue;
+        next[k] = patch[k];
+        next.fetched[k] = todayISO || next.fetched[k];
+      }
+      if (todayISO) next = { ...next, ...trimCache(next, todayISO, days) };
+      let w = write(KEYS.cache, next);
+      if (w.ok) return { ...w, cache: next, degraded: false };
+      /* F5: hellre halv historik med besked än ingen cache alls */
+      const half = Math.max(30, Math.floor((next.activities?.length ?? 0) / 2));
+      const shrunk = { ...next, activities: (next.activities ?? []).slice(-half) };
+      w = write(KEYS.cache, shrunk);
+      if (w.ok) return { ...w, cache: shrunk, degraded: true,
+        error: `Lagringen räckte inte till hela historiken — de ${half} senaste aktiviteterna sparades. ` +
+               `Sänk historikfönstret i Inställningar eller rensa legacy-nycklar.` };
+      return { ...w, cache };
+    },
+
+    clearCache() { try { storage.removeItem(KEYS.cache); return { ok: true }; }
+                   catch (e) { return { ok: false, error: String(e?.message ?? e) }; } },
 
     unblock() { blocked = null; }
   };
@@ -1156,6 +1321,102 @@ export function readActivityCache(raw) {
   return { activities, path: where, total: found.length };
 }
 
+/* ================================================================
+   EGNA PROJEKTIONER (fas B §5.2) — Next bestämmer fälten själv.
+   Skillnaden mot readActivityCache: den letar i någon annans struktur,
+   dessa läser API:ets svar direkt och vitlistar (F5).
+   ================================================================ */
+
+export function projectActivities(raw) {
+  if (!Array.isArray(raw)) return { activities: [], error: "aktivitetssvaret är ingen lista" };
+  const activities = raw.filter(looksLikeActivity).map(a => {
+    const t = {};
+    for (const k of ACT_FIELDS) if (a[k] !== undefined) t[k] = a[k];
+    if (!t.start_date_local && a.start_date) t.start_date_local = a.start_date;
+    return t;
+  }).sort((a, b) => String(a.start_date_local) < String(b.start_date_local) ? -1 : 1);
+  return { activities, total: raw.length, dropped: raw.length - activities.length };
+}
+
+export const WELL_FIELDS = ["id", "restingHR", "resting_hr", "hrv", "hrvSDNN", "sleepSecs",
+  "sleepScore", "sleepQuality", "ctl", "atl", "weight", "readiness"];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function projectWellness(raw) {
+  if (!Array.isArray(raw)) return { wellness: [], error: "wellnesssvaret är ingen lista" };
+  const wellness = raw.filter(w => w && typeof w === "object" && DATE_RE.test(String(w.id ?? "")))
+    .map(w => {
+      const t = {};
+      for (const k of WELL_FIELDS) if (w[k] !== undefined) t[k] = w[k];
+      /* API:et har två stavningar; vi lagrar en (en sanning per fakta) */
+      if (t.resting_hr !== undefined) { if (t.restingHR === undefined) t.restingHR = t.resting_hr;
+                                        delete t.resting_hr; }
+      return t;
+    }).sort((a, b) => a.id < b.id ? -1 : 1);
+  return { wellness, total: raw.length, dropped: raw.length - wellness.length };
+}
+
+/* Atletprofilen: zoner per gren + benchmarks. Defensivt byggd i v32:s anda —
+   kända fältvarianter provas, orimliga värden förkastas, saknas allt blir det null. */
+export function projectAthlete(raw) {
+  if (!raw || typeof raw !== "object") return { athlete: null, error: "atletsvaret är inte ett objekt" };
+  const settings = raw.sportSettings ?? raw.sport_settings ?? [];
+  const sports = {};
+  for (const s of Array.isArray(settings) ? settings : []) {
+    const types = (s?.types ?? []).map(x => String(x));
+    const sport = types.map(t => SPORT_MAP[t]).find(Boolean);
+    if (!sport || sports[sport]) continue;
+    const hz = s.hr_zones ?? s.hrZones ?? null;
+    const zones = Array.isArray(hz) && hz.length >= 3 && hz.every(v => typeof v === "number" && v > 40 && v < 240)
+      ? hz.map(Math.round) : null;
+    const num = v => (typeof v === "number" && Number.isFinite(v) && v > 0) ? v : null;
+    sports[sport] = { types, zones,
+      lthr: num(s.lthr), ftp: num(s.ftp),
+      thresholdPace: num(s.threshold_pace ?? s.thresholdPace) };   /* m/s (v32: kodningen verifierad) */
+  }
+  const athlete = { id: raw.id ?? null, name: raw.name ?? null, sports,
+                    icu_ftp: (typeof raw.icu_ftp === "number" && raw.icu_ftp > 0) ? raw.icu_ftp : null };
+  return { athlete, sportCount: Object.keys(sports).length };
+}
+
+/* Benchmarks: alltid ur atletens egna värden, aldrig absoluta antaganden.
+   Saknat fält blir null — hellre tomt än påhittat (ingen falsk precision). */
+export function benchmarksOf(athlete) {
+  const s = athlete?.sports ?? {};
+  const paceStr = mps => mps ? (() => {
+    const secPerKm = 1000 / mps;
+    return `${Math.floor(secPerKm / 60)}:${String(Math.round(secPerKm % 60)).padStart(2, "0")}/km`;
+  })() : null;
+  const cssStr = mps => mps ? (() => {
+    const sec = 100 / mps;
+    return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}/100 m`;
+  })() : null;
+  return {
+    ftp: s.bike?.ftp ?? athlete?.icu_ftp ?? null,
+    bikeLthr: s.bike?.lthr ?? null,
+    runLthr: s.run?.lthr ?? null,
+    runThreshold: paceStr(s.run?.thresholdPace),
+    css: cssStr(s.swim?.thresholdPace)
+  };
+}
+
+/* ---------- Källval (fas B §5.5) ----------
+   Egen cache vinner alltid. v32 läses bara när egen är tom — aldrig
+   sammanslagning av två källor, det vore en andra sanning (F3). */
+export function pickActivitySource(own, v32raw) {
+  const mine = own?.activities ?? [];
+  if (mine.length)
+    return { activities: mine, source: "next", fetched: own?.fetched?.activities ?? null,
+             why: `${mine.length} aktiviteter ur egen cache` +
+                  (own?.fetched?.activities ? ` (hämtade ${own.fetched.activities})` : "") };
+  const r = readActivityCache(v32raw);
+  if (r.activities.length)
+    return { activities: r.activities, source: "v32", fetched: null,
+             why: `${r.activities.length} lästa ur v32-cachen (${r.path}, read-only) — anslut i Inställningar för egen hämtning` };
+  return { activities: [], source: "none", fetched: null,
+           why: r.error ?? "ingen aktivitetsdata — anslut till intervals.icu i Inställningar" };
+}
+
 /* Utfallets zonremsa: icu_hr_zone_times (sekunder per zon) → [min Z1..Z5].
    Samma zoneDist som plan-sidan konsumerar resultatet (M2). */
 export function actZoneMinutes(a) {
@@ -1245,7 +1506,13 @@ export function backupExport(overlay, planVersion, now = "", cfg = null) {
   const b = { kind: "trizone-next-backup", formatVersion: FORMAT_VERSION,
               exported: now, planVersion: planVersion ?? overlay?.planVersion ?? null,
               overlay: structuredClone(overlay ?? emptyOverlay()) };
-  if (cfg) b.cfg = structuredClone(cfg);        /* bindningar följer med (D7) */
+  if (cfg) {
+    b.cfg = structuredClone(cfg);               /* bindningar följer med (D7) */
+    /* Fas B-beslut: API-nyckeln är en hemlighet, inte en inställning. Kopior
+       hamnar i mail och molnmappar — nyckeln stannar i webbläsaren och skrivs
+       in på nytt vid enhetsbyte. athlete-ID och historikfönster är inte hemliga. */
+    if (b.cfg.conn) b.cfg.conn = { ...b.cfg.conn, apiKey: "" };
+  }
   return b;
 }
 
@@ -1391,6 +1658,174 @@ export function zoneParity(activities) {
                 ` — utfallsremsan kan vara felkalibrerad för dessa. Kontrollera PULSzonerna (inte pace) per gren i intervals.icu.` };
 }
 
+
+/* ---------- Full zonparitet (fas B §5.4) ----------
+   Dagens vakt räknar bara zonvektorns längd i aktiviteterna. Med egen
+   atletprofil kan vi granska sanningen: intervals.icu:s faktiska zongränser.
+   Appen har medvetet inget eget zonregister — profilen ÄR zonsanningen (F3,
+   produktägarbeslut fas B). Vi läser, redovisar och varnar; vi justerar aldrig. */
+export function zoneParityFull(athlete, activities) {
+  const problems = [], rows = [];
+  const sports = athlete?.sports ?? null;
+  if (!sports || !Object.keys(sports).length)
+    return { ...zoneParity(activities), profile: false,
+             why: (zoneParity(activities).why) + " · atletprofilen inte hämtad än — gränserna kan inte granskas" };
+
+  for (const [sport, s] of Object.entries(sports)) {
+    /* Simundantaget (matchningsspec §7): pulszoner i vatten är ogiltiga med optisk
+       handledspuls, så deras avsaknad är korrekt läge — inte ett paritetsfel.
+       Styrka har heller ingen zonremsa. Att flagga dessa vore falskt larm. */
+    if (sport === "swim" || sport === "strength") {
+      rows.push({ sport, zones: s.zones?.length ?? null, bounds: s.zones, lthr: s.lthr, exempt: true });
+      continue;
+    }
+    if (!s.zones) { rows.push({ sport, zones: null, why: "inga pulszoner satta" });
+                    problems.push(`${sport}: inga PULSzoner i profilen`); continue; }
+    rows.push({ sport, zones: s.zones.length, bounds: s.zones, lthr: s.lthr });
+    if (s.zones.length !== ZONE_COUNT)
+      problems.push(`${sport}: ${s.zones.length} zoner i profilen, appen räknar med ${ZONE_COUNT}`);
+    for (let i = 1; i < s.zones.length; i++)
+      if (s.zones[i] <= s.zones[i - 1]) problems.push(`${sport}: zongränserna stiger inte (Z${i}→Z${i + 1})`);
+  }
+
+  /* Aktiviteternas vektorlängd mot profilens zonantal, per gren */
+  const bySport = {};
+  for (const a of activities ?? []) {
+    const z = a?.icu_hr_zone_times;
+    if (!Array.isArray(z) || !z.length) continue;
+    const sp = SPORT_MAP[a.type] ?? a.type;
+    (bySport[sp] ??= new Set()).add(z.length);
+  }
+  for (const [sp, lens] of Object.entries(bySport)) {
+    if (sp === "swim" || sp === "strength") continue;
+    const want = sports[sp]?.zones?.length ?? ZONE_COUNT;
+    const bad = [...lens].filter(n => n !== want);
+    if (bad.length) problems.push(`${sp}: aktiviteter med ${bad.join("/")} zoner mot profilens ${want}`);
+  }
+
+  const shown = rows.map(r => `${r.sport} ${r.zones ?? "–"}${r.lthr ? ` (LTHR ${r.lthr})` : ""}`).join(" · ");
+  if (!problems.length)
+    return { ok: true, profile: true, rows, mismatches: [], checked: (activities ?? []).length,
+             why: `zonparitet mot intervals.icu: ${shown}` };
+  return { ok: false, profile: true, rows, mismatches: problems, checked: (activities ?? []).length,
+           why: problems.join(" · ") + " — rätta i intervals.icu (Settings → Zones) och hämta om." };
+}
+
+/* ================================================================
+   ÅTERHÄMTNING (fas B §5.3) — alternativ C, produktägarbeslut 2026-08-04
+   Två signaler med skilda uppgifter:
+     • DAGSSIGNAL  → matar sleep-guard (nivå 1, derived ⇒ motorn FRÅGAR)
+     • TRENDSIGNAL → matar recovery-watch (nivå 3, varnar bara)
+   Allt mäts mot atletens EGEN baslinje. Absoluta timgränser förekommer inte:
+   en småbarnsförälders normalnatt är inte en avvikelse, och en nivå 1-regel
+   man lärt sig klicka bort är sämre än ingen regel alls.
+   ================================================================ */
+
+export const RECOV = {
+  rhrDayDelta: 5,        /* dagssignal: +5 bpm över egen baslinje (regelverk §6) */
+  sleepDayDeltaH: 1.5,   /* dagssignal: 1,5 h under egen baslinje */
+  baseDays: 30,          /* baslinjefönster */
+  minRhrBase: 14, minSleepBase: 10,   /* under detta vilar signalen — ingen falsk precision */
+  maxAgeDays: 1,         /* mätning äldre än så är inte "i natt" */
+  trendWin: 7, trendDelta: 5,          /* v32:s fälttestade trendmodell, oförändrad */
+  minTrendPoints: 20, minTrendRecent: 4, minTrendBase: 14,
+  hrvFrac: 0.9, minHrvBase: 7
+};
+
+const median = a => { const s = [...a].sort((x, y) => x - y), n = s.length;
+  return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
+const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+const r1 = v => v == null ? null : Math.round(v * 10) / 10;
+
+export function recovery(wellness, todayISO, opts = {}) {
+  const R = { ...RECOV, ...opts };
+  const rows = (wellness ?? [])
+    .filter(w => DATE_RE.test(String(w?.id ?? "")) && w.id <= todayISO)
+    .sort((a, b) => a.id < b.id ? -1 : 1);
+  const day   = { date: null, rhr: null, rhrBase: null, rhrDelta: null,
+                  sleepH: null, sleepBase: null, sleepDelta: null, flags: {}, why: [] };
+  const trend = { rhr7: null, rhrBase: null, rhrDelta: null,
+                  hrv: null, hrvBase: null, flags: {}, why: [] };
+  const cov = { rhrDays: 0, sleepNights: 0, hrvDays: 0 };
+  if (!rows.length) return { has: false, day, trend, coverage: cov, why: "ingen wellnessdata" };
+
+  const rhr   = rows.filter(w => Number(w.restingHR) > 0).map(w => ({ d: w.id, v: Number(w.restingHR) }));
+  const sleep = rows.filter(w => Number(w.sleepSecs) > 0).map(w => ({ d: w.id, v: Number(w.sleepSecs) / 3600 }));
+  const hrv   = rows.filter(w => Number(w.hrv) > 0).map(w => ({ d: w.id, v: Number(w.hrv) }));
+  cov.rhrDays = rhr.length; cov.sleepNights = sleep.length; cov.hrvDays = hrv.length;
+
+  const fresh = arr => {                       /* senaste mätningen, om den är färsk nog */
+    const last = arr[arr.length - 1];
+    if (!last) return null;
+    const cut = dayShift(todayISO, -R.maxAgeDays);
+    return cut && last.d >= cut ? last : null;
+  };
+  const baseWin = (arr, exceptDate) => {
+    const from = dayShift(todayISO, -R.baseDays);
+    return arr.filter(x => x.d >= from && x.d !== exceptDate).map(x => x.v);
+  };
+
+  /* ---- Dagssignal: i natt mot din egen normal ---- */
+  const lastR = fresh(rhr);
+  if (lastR) {
+    const base = baseWin(rhr, lastR.d);
+    if (base.length >= R.minRhrBase) {
+      const b = median(base);
+      day.date = lastR.d; day.rhr = lastR.v; day.rhrBase = r1(b); day.rhrDelta = r1(lastR.v - b);
+      if (lastR.v - b >= R.rhrDayDelta) { day.flags.rhr = true;
+        day.why.push(`Vilopulsen i morse ${lastR.v} mot din normal ${Math.round(b)}`); }
+    }
+  }
+  const lastS = fresh(sleep);
+  if (lastS) {
+    const base = baseWin(sleep, lastS.d);
+    if (base.length >= R.minSleepBase) {
+      const b = median(base);
+      day.date ??= lastS.d; day.sleepH = r1(lastS.v); day.sleepBase = r1(b); day.sleepDelta = r1(lastS.v - b);
+      if (b - lastS.v >= R.sleepDayDeltaH) { day.flags.sleep = true;
+        day.why.push(`Sömnen ${r1(lastS.v)} h mot din normal ${r1(b)} h`); }
+    }
+  }
+
+  /* ---- Trendsignal: v32:s modell, oförändrad ---- */
+  if (rhr.length >= R.minTrendPoints) {
+    const cut = dayShift(todayISO, -R.trendWin);
+    const recent = rhr.filter(x => x.d >= cut).map(x => x.v);
+    const base = rhr.filter(x => x.d < cut && x.d >= dayShift(todayISO, -(R.trendWin + R.baseDays))).map(x => x.v);
+    if (recent.length >= R.minTrendRecent && base.length >= R.minTrendBase) {
+      const m = mean(recent), b = mean(base);
+      trend.rhr7 = r1(m); trend.rhrBase = r1(b); trend.rhrDelta = r1(m - b);
+      if (m - b > R.trendDelta) { trend.flags.rhr = true;
+        trend.why.push(`Vilopulsen ligger ${r1(m - b)} slag över din ${R.baseDays}-dagarsnormal (${Math.round(m)} mot ${Math.round(b)})`); }
+    }
+  }
+  const lastH = hrv[hrv.length - 1];
+  if (lastH) {
+    const base = baseWin(hrv, null);
+    if (base.length >= R.minHrvBase) {
+      const b = mean(base);
+      trend.hrv = Math.round(lastH.v); trend.hrvBase = Math.round(b);
+      if (lastH.v < b * R.hrvFrac) { trend.flags.hrv = true;
+        trend.why.push(`HRV ${Math.round(lastH.v)} ms mot din baslinje ${Math.round(b)} ms`); }
+    }
+  }
+
+  const has = !!(day.rhr != null || day.sleepH != null || trend.rhr7 != null || trend.hrv != null);
+  return { has, day, trend, coverage: cov,
+           why: has ? "återhämtningsdata läst" : "för lite wellnessdata för baslinjer än" };
+}
+
+/* Motorflaggor ur wellness. Dagssignalen är derived ⇒ motorn frågar, du svarar (D2). */
+export function wellnessFlags(wellness, todayISO, opts = {}) {
+  const r = recovery(wellness, todayISO, opts);
+  const out = [];
+  if (!r.has) return out;
+  if (r.day.flags.rhr || r.day.flags.sleep)
+    out.push({ id: "sleep-guard", source: "derived", date: todayISO, why: r.day.why.join(" · ") });
+  if (r.trend.flags.rhr || r.trend.flags.hrv)
+    out.push({ id: "recovery-watch", source: "derived", why: r.trend.why.join(" · ") });
+  return out;
+}
 
 /* ================================================================
    ATLETVAKT (D-M2, 0.9.0) — fel plan ska aldrig laddas tyst

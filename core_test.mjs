@@ -1119,10 +1119,344 @@ const cseq = (...evs) => evs.reduce(curtainReduce, curtainIdle);
           { type:"cancel" }).commit, "open",
      "avbrott återgår till utgångsläget — gardinen tappas aldrig halvvägs"); }
 
+/* ================================================================
+   FAS B — egen datapipeline mot intervals.icu (0.10.0)
+   ================================================================ */
+import { ICU, validateConn, connReady, icuRequest, proxyAllowed, icuError,
+         CACHE_VERSION, emptyCache, trimCache, projectActivities, projectWellness,
+         projectAthlete, benchmarksOf, pickActivitySource, zoneParityFull,
+         recovery, wellnessFlags, RECOV, V32_CACHE_KEY } from "./core.js";
+
+/* ---------- Anslutning: validering ---------- */
+{ ok(validateConn({ apiKey: "", athleteId: "" }).ok,
+     "conn: tomt är inte fel — anslutningen är bara inte konfigurerad än");
+  ok(validateConn({ apiKey: "abcdefghijkl", athleteId: "i123456" }).ok, "conn: giltig anslutning passerar");
+  ok(validateConn({ apiKey: "abcdefghijkl", athleteId: "123456" }).ok, "conn: rena siffror accepteras som athlete-ID");
+  const bad = validateConn({ apiKey: "abcdefghijkl", athleteId: "niklas" });
+  ok(!bad.ok && bad.errors[0].why.includes("i123456"),
+     "conn: felaktigt athlete-ID pekar på väntat format, inte bara 'ogiltigt'");
+  const shortKey = validateConn({ apiKey: "abc", athleteId: "i123456" });
+  ok(!shortKey.ok && shortKey.errors[0].why.includes("Developer"),
+     "conn: för kort nyckel säger VAR den hämtas");
+  ok(!validateConn({ apiKey: "abcdefghijkl", athleteId: "i123456", historyDays: 9999 }).ok,
+     "conn: historikfönster utanför gränserna avvisas");
+  ok(!validateConn(null).ok, "conn: null avvisas");
+  eq(ICU.defHistory, 370, "historikfönstret: 370 dagar — hela säsongen jämförbar (produktägarbeslut)"); }
+
+/* ---------- Anslutning: beredskap ---------- */
+{ eq(connReady({ apiKey: "", athleteId: "" }).ready, false, "connReady: tom anslutning är inte klar");
+  ok(connReady({ apiKey: "", athleteId: "i123456" }).why.includes("API-nyckel"),
+     "connReady: halvifylld säger vilken halva som saknas");
+  ok(connReady({ apiKey: "abcdefghijkl", athleteId: "" }).why.includes("athlete-ID"),
+     "connReady: saknat ID namnges");
+  ok(connReady({ apiKey: "abcdefghijkl", athleteId: "i123456" }).ready, "connReady: komplett anslutning är klar"); }
+
+/* ---------- Anslutning: URL och headers (rena, testbara utan nät) ---------- */
+{ const c = { apiKey: "abcdefghijkl", athleteId: "i123456", historyDays: 370 };
+  const a = icuRequest(c, "activities", "2026-08-05");
+  ok(a.url.startsWith("https://intervals.icu/api/v1/athlete/i123456/activities"), "icuRequest: aktivitets-URL");
+  ok(a.url.includes("oldest=2025-07-31"), "icuRequest: oldest räknas 370 dagar bakåt");
+  ok(a.url.includes("newest=2026-08-06"), "icuRequest: newest tar med morgondagen (tidszonsmarginal)");
+  eq(a.headers.Authorization, "Basic " + Buffer.from("API_KEY:abcdefghijkl").toString("base64"),
+     "icuRequest: Basic-auth med API_KEY som användarnamn (v32:s verifierade form)");
+  const w = icuRequest(c, "wellness", "2026-08-05");
+  ok(w.url.includes("/wellness?oldest=2025-07-31&newest=2026-08-05"), "icuRequest: wellness slutar idag, inte imorgon");
+  eq(icuRequest(c, "athlete", "2026-08-05").url, "https://intervals.icu/api/v1/athlete/i123456",
+     "icuRequest: atletprofilen är bas-URL:en utan spann");
+  ok(icuRequest({ apiKey: "", athleteId: "" }, "activities", "2026-08-05").error,
+     "icuRequest: okonfigurerad anslutning ger fel, aldrig ett halvt anrop");
+  ok(icuRequest(c, "gissning", "2026-08-05").error.includes("gissning"),
+     "icuRequest: okänd hämtningstyp namnges");
+  const c30 = { ...c, historyDays: 30 };
+  ok(icuRequest(c30, "activities", "2026-08-05").url.includes("oldest=2026-07-06"),
+     "icuRequest: kortare historikfönster respekteras"); }
+
+/* ---------- Nyckeln lämnar aldrig webbläsaren (v32:s säkerhetsregel, ärvd) ---------- */
+{ const r = icuRequest({ apiKey: "hemlignyckel1", athleteId: "i123456" }, "activities", "2026-08-05");
+  eq(proxyAllowed(r.headers), false,
+     "SÄKERHET: anrop med Authorization får ALDRIG proxas — annars får proxyägaren nyckeln");
+  eq(proxyAllowed({}), true, "proxyAllowed: anrop utan auth får proxas (publika CSV-länkar)");
+  eq(proxyAllowed(null), true, "proxyAllowed: headerlöst anrop får proxas");
+  ok(!r.url.includes("hemlignyckel1"), "SÄKERHET: nyckeln hamnar aldrig i URL:en"); }
+
+/* ---------- Felmeddelanden pekar på rotorsak (F4) ---------- */
+{ ok(icuError(401, "aktiviteter").includes("nyckeln avvisades"), "401 → fel nyckel, inte 'något gick fel'");
+  ok(icuError(403, "aktiviteter").includes("athlete-ID"), "403 → fel athlete-ID namnges");
+  ok(icuError(404, "wellness").includes("i123456"), "404 → väntat ID-format visas");
+  ok(icuError(429, "aktiviteter").includes("Vänta"), "429 → åtgärden är att vänta");
+  ok(icuError(503, "wellness").includes("Cachen gäller"), "5xx → cachen gäller, appen dör inte"); }
+
+/* ---------- Egen cache: nyckel, form, trimning ---------- */
+{ eq(KEYS.cache, "trizone.next.cache.v1", "cache: egen nyckel, beslutad i fas B");
+  eq(V32_CACHE_KEY, "trizone.cache.v1", "v32-nyckeln är känd men skrivs aldrig");
+  const e = emptyCache();
+  eq(e.v, CACHE_VERSION, "tom cache bär formatversion");
+  eq([e.activities.length, e.wellness.length, e.athlete], [0, 0, null], "tom cache är tom");
+  const c = { ...emptyCache(),
+    activities: [{ id: 1, start_date_local: "2024-01-01T08:00:00" },
+                 { id: 2, start_date_local: "2026-08-01T08:00:00" }],
+    wellness: [{ id: "2024-01-01" }, { id: "2026-08-01" }] };
+  const t = trimCache(c, "2026-08-05", 370);
+  eq(t.activities.map(a => a.id), [2], "trimCache: aktiviteter utanför fönstret faller bort");
+  eq(t.wellness.map(w => w.id), ["2026-08-01"], "trimCache: wellness trimmas mot samma fönster"); }
+
+/* ---------- Egen cache: lagring, patch-semantik, degradering ---------- */
+{ const st = makeStore(fakeStorage(1e6));
+  eq(st.loadCache().cache.activities.length, 0, "loadCache: saknad cache ger tom cache, inget fel");
+  const r1 = st.saveCache(emptyCache(), { activities: [{ id: 1, start_date_local: "2026-08-01T08:00:00" }] }, "2026-08-05");
+  ok(r1.ok, "saveCache: skrivning lyckas");
+  eq(r1.cache.fetched.activities, "2026-08-05", "saveCache: hämtningstidpunkt stämplas per sektion");
+  eq(r1.cache.fetched.wellness, null, "saveCache: orörd sektion får ingen falsk stämpel");
+  const r2 = st.saveCache(r1.cache, { wellness: [{ id: "2026-08-04", restingHR: 48 }] }, "2026-08-05");
+  eq(r2.cache.activities.length, 1, "saveCache: patch rör aldrig facken den inte fick värden för");
+  eq(r2.cache.wellness.length, 1, "saveCache: nytt fack skrivs");
+  eq(st.loadCache().cache.wellness[0].restingHR, 48, "loadCache: läser tillbaka det som skrevs"); }
+
+{ const st = makeStore(fakeStorage(1e6, { "trizone.next.cache.v1": "{trasig" }));
+  const l = st.loadCache();
+  eq(l.cache.activities.length, 0, "loadCache: trasig cache blockerar aldrig appen");
+  ok(l.error, "loadCache: trasig cache redovisas"); }
+
+{ const st = makeStore(fakeStorage(1e6, { "trizone.next.cache.v1": JSON.stringify({ v: 99, activities: [] }) }));
+  const l = st.loadCache();
+  ok(l.error.includes("hämta om"), "loadCache: okänd formatversion ger tom cache och besked, aldrig feltolkning"); }
+
+{ /* Kvotfel: hellre halv historik med besked än ingen cache alls (F5) */
+  const many = Array.from({ length: 200 }, (_, i) =>
+    ({ id: i, type: "Run", start_date_local: "2026-08-01T08:00:00", name: "x".repeat(60) }));
+  const st = makeStore(fakeStorage(14000));
+  const r = st.saveCache(emptyCache(), { activities: many }, "2026-08-05");
+  ok(r.ok && r.degraded, "saveCache: kvotfel ⇒ degraderad skrivning i stället för allt-eller-inget");
+  ok(r.cache.activities.length < 200 && r.cache.activities.length >= 30, "saveCache: historiken halveras, inte nollas");
+  ok(r.error.includes("Inställningar"), "saveCache: degradering säger vad användaren kan göra");
+  eq(r.cache.activities[r.cache.activities.length - 1].id, 199, "saveCache: NYASTE historiken behålls"); }
+
+{ const st = makeStore(fakeStorage(1e6));
+  st.saveCache(emptyCache(), { activities: [{ id: 1, start_date_local: "2026-08-01T08:00:00" }] }, "2026-08-05");
+  ok(st.clearCache().ok, "clearCache: cachen går att rensa");
+  eq(st.loadCache().cache.activities.length, 0, "clearCache: efter rensning är cachen tom"); }
+
+/* ---------- Projektioner: Next bestämmer fälten (F5) ---------- */
+{ const raw = [{ id: 9, type: "Run", start_date_local: "2026-08-03T18:00:00", moving_time: 3120,
+                 icu_rpe: 7, feel: 4, kudos_count: 12, description: "x".repeat(4000), athlete: { id: "i1" } },
+               { id: 10, type: "Ride", start_date: "2026-08-04T06:00:00", moving_time: 3600 },
+               { nonsens: true }];
+  const p = projectActivities(raw);
+  eq(p.activities.length, 2, "projectActivities: skräpposter faller bort");
+  eq(p.dropped, 1, "projectActivities: bortfallet redovisas");
+  ok(!("kudos_count" in p.activities[0]) && !("description" in p.activities[0]),
+     "projectActivities: okända fält når aldrig lagringen");
+  eq(p.activities[0].icu_rpe, 7, "projectActivities: icu_rpe följer med — fältet v32 inte bar");
+  eq(p.activities[0].feel, 4, "projectActivities: feel följer med");
+  eq(p.activities[1].start_date_local, "2026-08-04T06:00:00",
+     "projectActivities: start_date faller tillbaka till start_date_local");
+  eq(p.activities.map(a => a.id), [9, 10], "projectActivities: sorterad i tidsordning");
+  ok(projectActivities("nej").error, "projectActivities: icke-lista ger fel, aldrig tyst tom"); }
+
+{ const raw = [{ id: "2026-08-04", restingHR: 47, hrv: 62, sleepSecs: 21600, junk: "x".repeat(3000) },
+               { id: "2026-08-03", resting_hr: 49 },
+               { id: "inte-ett-datum", restingHR: 50 }];
+  const p = projectWellness(raw);
+  eq(p.wellness.length, 2, "projectWellness: rader utan datum-id faller bort");
+  eq(p.wellness[0].id, "2026-08-03", "projectWellness: sorterad i datumordning");
+  eq(p.wellness[0].restingHR, 49, "projectWellness: resting_hr normaliseras till restingHR — en stavning lagras");
+  ok(!("resting_hr" in p.wellness[0]), "projectWellness: dubbelstavningen städas bort (en sanning per fakta)");
+  ok(!("junk" in p.wellness[1]), "projectWellness: okända fält vitlistas bort"); }
+
+/* ---------- Atletprofil och benchmarks ---------- */
+const ATH = { id: "i123456", name: "Niklas", icu_ftp: 262, sportSettings: [
+  { types: ["Ride", "VirtualRide"], hr_zones: [120, 140, 155, 168, 185], lthr: 168, ftp: 262 },
+  { types: ["Run"], hr_zones: [128, 148, 162, 173, 190], lthr: 173, threshold_pace: 2.967 },
+  { types: ["Swim"], threshold_pace: 0.8065 },
+  { types: ["Yoga"], hr_zones: [100, 120, 130, 140, 150] } ] };
+{ const p = projectAthlete(ATH);
+  eq(p.sportCount, 3, "projectAthlete: bara kända grenar plockas — Yoga ignoreras");
+  eq(p.athlete.sports.bike.zones.length, 5, "projectAthlete: cykelns zoner läses");
+  eq(p.athlete.sports.run.lthr, 173, "projectAthlete: LTHR per gren läses");
+  ok(projectAthlete({ sportSettings: [{ types: ["Run"], hr_zones: [1, 2, 3] }] }).athlete.sports.run.zones === null,
+     "projectAthlete: orimliga pulsvärden förkastas hellre än renderas");
+  ok(projectAthlete(null).error, "projectAthlete: tomt svar ger fel, aldrig påhittad profil");
+  const b = benchmarksOf(p.athlete);
+  eq(b.ftp, 262, "benchmarks: FTP ur cykelns sportSettings");
+  eq(b.runLthr, 173, "benchmarks: löp-LTHR");
+  eq(b.runThreshold, "5:37/km", "benchmarks: tröskeltempo avkodat ur m/s (v32:s verifierade kodning)");
+  eq(b.css, "2:04/100 m", "benchmarks: CSS avkodat ur simmens threshold_pace");
+  eq(benchmarksOf(null).ftp, null, "benchmarks: saknad profil ger null, aldrig gissning");
+  eq(benchmarksOf({ sports: { run: {} } }).css, null, "benchmarks: saknat fält blir null — ingen falsk precision"); }
+
+/* ---------- Fallback under parallellkörning (§5.5) ---------- */
+{ const v32 = JSON.stringify({ data: { activities: [
+    { id: 1, type: "Run", start_date_local: "2026-08-01T18:00:00", moving_time: 3000 }] } });
+  const own = { ...emptyCache(), activities: [
+    { id: 2, type: "Ride", start_date_local: "2026-08-02T18:00:00" },
+    { id: 3, type: "Run", start_date_local: "2026-08-03T18:00:00" }],
+    fetched: { activities: "2026-08-05", wellness: null, athlete: null } };
+  const a = pickActivitySource(own, v32);
+  eq(a.source, "next", "fallback: egen cache vinner alltid");
+  eq(a.activities.length, 2, "fallback: v32 blandas ALDRIG in när egen finns (en sanning per fakta)");
+  ok(a.why.includes("2026-08-05"), "fallback: källan redovisar hämtningstidpunkt");
+  const b = pickActivitySource(emptyCache(), v32);
+  eq(b.source, "v32", "fallback: tom egen cache ⇒ v32 läses read-only");
+  eq(b.activities.length, 1, "fallback: v32:s aktiviteter kommer fram");
+  ok(b.why.includes("Inställningar"), "fallback: v32-läget pekar på vägen till egen hämtning");
+  const c = pickActivitySource(emptyCache(), null);
+  eq(c.source, "none", "fallback: ingen källa alls redovisas som ingen källa");
+  eq(c.activities.length, 0, "fallback: utan data blir listan tom, aldrig påhittad"); }
+
+/* ---------- Full zonparitet (§5.4) ---------- */
+{ const ath = projectAthlete(ATH).athlete;
+  const acts5 = [{ id: 1, type: "Run", icu_hr_zone_times: [600, 900, 300, 120, 60] }];
+  const good = zoneParityFull(ath, acts5);
+  ok(good.ok && good.profile, "zonparitet: profil med 5 zoner och 5-vektorer = paritet");
+  ok(good.why.includes("LTHR 173"), "zonparitet: LTHR redovisas granskningsbart i Inställningar");
+  const ath7 = projectAthlete({ sportSettings: [
+    { types: ["Run"], hr_zones: [120, 135, 148, 158, 168, 178, 190], lthr: 173 } ] }).athlete;
+  const bad7 = zoneParityFull(ath7, acts5);
+  ok(!bad7.ok && bad7.mismatches.some(m => m.includes("7 zoner")),
+     "zonparitet: 7 zoner i profilen fångas — det dagens längdvakt missar");
+  const noZones = projectAthlete({ sportSettings: [{ types: ["Ride"], ftp: 262 }] }).athlete;
+  ok(!zoneParityFull(noZones, []).ok, "zonparitet: cykel utan pulszoner flaggas");
+  /* Simundantaget (matchningsspec §7) — buggfixtur 2026-08-05: första versionen
+     krävde pulszoner även för sim, vilket hade gett ett permanent falskt larm
+     eftersom optisk handledspuls i vatten är ogiltig by design. */
+  const swimOnly = projectAthlete({ sportSettings: [{ types: ["Swim"], threshold_pace: 0.8 }] }).athlete;
+  ok(zoneParityFull(swimOnly, []).ok,
+     "zonparitet: sim utan pulszoner är KORREKT läge, inte ett fel (simundantaget)");
+  const swimActs = [{ id: 5, type: "Swim", icu_hr_zone_times: [100, 200, 50] }];
+  ok(zoneParityFull(projectAthlete(ATH).athlete, swimActs).ok,
+     "zonparitet: simaktiviteters zonvektor granskas aldrig — remsan renderas ändå inte");
+  const rising = projectAthlete({ sportSettings: [
+    { types: ["Run"], hr_zones: [150, 140, 160, 170, 180] } ] }).athlete;
+  ok(zoneParityFull(rising, []).mismatches.some(m => m.includes("stiger inte")),
+     "zonparitet: zongränser som inte stiger är ett fel, inte en kuriositet");
+  const noProfile = zoneParityFull(null, acts5);
+  eq(noProfile.profile, false, "zonparitet: utan profil faller vi tillbaka på längdvakten");
+  ok(noProfile.why.includes("inte hämtad"), "zonparitet: avsaknaden av profil redovisas ärligt"); }
+
+/* ---------- Återhämtning: dagssignal mot EGEN baslinje ---------- */
+const wSeries = (n, fn) => Array.from({ length: n }, (_, i) => {
+  const d = new Date(Date.UTC(2026, 6, 1)); d.setUTCDate(d.getUTCDate() + i);
+  return { id: d.toISOString().slice(0, 10), ...fn(i) };
+});
+{ /* 35 dagar normal vilopuls 48, sista morgonen 55 */
+  const w = wSeries(35, i => ({ restingHR: i === 34 ? 55 : 48, sleepSecs: 6.5 * 3600 }));
+  const r = recovery(w, "2026-08-04");
+  ok(r.has, "recovery: data finns");
+  eq(r.day.rhr, 55, "dagssignal: morgonens vilopuls läses");
+  eq(r.day.rhrBase, 48, "dagssignal: baslinjen är DIN median, inte ett absolut tal");
+  ok(r.day.flags.rhr, "dagssignal: +7 över egen normal fyrar");
+  ok(r.day.why[0].includes("55") && r.day.why[0].includes("48"),
+     "dagssignal: motiveringen visar både mätning och normal"); }
+
+{ const w = wSeries(35, () => ({ restingHR: 48, sleepSecs: 6.5 * 3600 }));
+  const r = recovery(w, "2026-08-04");
+  ok(!r.day.flags.rhr, "dagssignal: normal morgon fyrar inte");
+  ok(!r.day.flags.sleep, "dagssignal: normal natt fyrar inte"); }
+
+{ /* SMÅBARNSFALLET: 5,5 h är hans normal — absolut 6,2 h-tröskel hade fyrat varje dag */
+  const w = wSeries(35, () => ({ restingHR: 48, sleepSecs: 5.5 * 3600 }));
+  const r = recovery(w, "2026-08-04");
+  ok(!r.day.flags.sleep,
+     "dagssignal: kort men NORMAL sömn fyrar aldrig — en regel man lär sig klicka bort är värdelös");
+  eq(r.day.sleepBase, 5.5, "dagssignal: baslinjen är den han faktiskt har"); }
+
+{ /* Samma man, en verkligt dålig natt: 3,5 h mot normalen 5,5 h */
+  const w = wSeries(35, i => ({ restingHR: 48, sleepSecs: (i === 34 ? 3.5 : 5.5) * 3600 }));
+  const r = recovery(w, "2026-08-04");
+  ok(r.day.flags.sleep, "dagssignal: 2 h under EGEN normal fyrar");
+  ok(r.day.why.some(s => s.includes("3.5")), "dagssignal: nattens faktiska timmar visas"); }
+
+{ /* För tunt underlag ⇒ signalen tiger hellre än gissar */
+  const w = wSeries(6, i => ({ restingHR: i === 5 ? 60 : 48 }));
+  const r = recovery(w, "2026-07-06");
+  ok(!r.day.flags.rhr, "dagssignal: under 14 baslinjedagar tiger signalen (ingen falsk precision)");
+  eq(r.coverage.rhrDays, 6, "recovery: täckningen redovisas så bristen syns"); }
+
+{ /* Gammal mätning är inte "i natt" */
+  const w = wSeries(30, i => ({ restingHR: i === 29 ? 58 : 48 }));
+  const r = recovery(w, "2026-08-10");
+  ok(!r.day.flags.rhr, "dagssignal: mätning äldre än ett dygn räknas inte som i morse"); }
+
+/* ---------- Återhämtning: trendsignal (v32:s modell, oförändrad) ---------- */
+{ /* 29 dagar på 48, sista veckan på 55. Fönstret är inklusivt i båda ändar
+     (v32:s form, oförändrad) — därför räknas 8 dagar, inte 7. */
+  const w = wSeries(37, i => ({ restingHR: i >= 29 ? 55 : 48, hrv: 60 }));
+  const r = recovery(w, "2026-08-06");
+  ok(r.trend.flags.rhr, "trendsignal: 7-dagarssnittet över 30-dagarsbasen fyrar");
+  eq(r.trend.rhr7, 55, "trendsignal: veckosnittet räknas");
+  ok(r.trend.why[0].includes("normal"), "trendsignal: motiveringen namnger baslinjen"); }
+
+{ const w = wSeries(37, i => ({ restingHR: 48, hrv: i === 36 ? 40 : 65 }));
+  const r = recovery(w, "2026-08-06");
+  ok(r.trend.flags.hrv, "trendsignal: HRV under 90 % av baslinjen fyrar");
+  ok(!r.trend.flags.rhr, "trendsignal: stabil vilopuls fyrar inte samtidigt"); }
+
+{ const w = wSeries(37, () => ({ restingHR: 48, hrv: 65 }));
+  const r = recovery(w, "2026-08-06");
+  ok(!r.trend.flags.rhr && !r.trend.flags.hrv, "trendsignal: stabil kropp ger tyst app"); }
+
+eq(recovery([], "2026-08-05").has, false, "recovery: tom wellness ger inget påstående alls");
+eq(recovery(null, "2026-08-05").day.flags.rhr, undefined, "recovery: null kraschar inte");
+
+/* ---------- Alternativ C: två signaler, två roller ---------- */
+{ const w = wSeries(35, i => ({ restingHR: i === 34 ? 56 : 48, sleepSecs: 6.5 * 3600 }));
+  const f = wellnessFlags(w, "2026-08-04");
+  const sg = f.find(x => x.id === "sleep-guard");
+  ok(sg, "alt C: dagssignalen blir sleep-guard");
+  eq(sg.source, "derived", "alt C: sleep-guard är DERIVED ⇒ motorn frågar, du svarar (D2)");
+  eq(sg.date, "2026-08-04", "alt C: flaggan bär dagen den gäller");
+  ok(sg.why.includes("56"), "alt C: frågan bär sin egen motivering"); }
+
+{ const w = wSeries(37, i => ({ restingHR: i >= 30 ? 55 : 48 }));
+  const f = wellnessFlags(w, "2026-08-06");
+  ok(f.some(x => x.id === "recovery-watch"), "alt C: trendsignalen blir recovery-watch");
+  eq(f.find(x => x.id === "recovery-watch").why.includes("slag över"), true,
+     "alt C: trendvarningen förklarar sig"); }
+
+eq(wellnessFlags([], "2026-08-05").length, 0, "alt C: utan data inga flaggor — appen hittar aldrig på");
+
+/* ---------- Flaggorna genom motorn ---------- */
+{ const r = applyRules(plan, {}, B, [{ id: "sleep-guard", source: "derived", date: "2026-10-15",
+                                       why: "Vilopulsen i morse 56 mot din normal 48" }], NOW);
+  const q = r.questions.find(x => x.rule === "sleep-guard");
+  ok(q && q.ask.includes("56"), "motorn: sleep-guards fråga bär den härledda orsaken");
+  ok(q.ask.includes("Sov du dåligt"), "motorn: frågan är fortfarande en fråga, inte ett påstående");
+  ok(!r.actions.some(a => a.rule === "sleep-guard"), "motorn: derived dagssignal ändrar ingenting själv"); }
+
+{ const r = applyRules(plan, {}, B, [{ id: "recovery-watch", source: "derived",
+                                       why: "HRV 42 ms mot din baslinje 61 ms" }], NOW);
+  const w = r.actions.filter(a => a.rule === "recovery-watch");
+  eq(w.length, 1, "motorn: recovery-watch ger exakt en post");
+  eq(w[0].level, 3, "motorn: recovery-watch är NIVÅ 3 — den varnar, den ändrar aldrig");
+  eq(w[0].action, "warn", "motorn: åtgärden är warn (H1)");
+  ok(w[0].why.includes("42 ms"), "motorn: varningen bär mätvärdena");
+  ok(w[0].why.includes("Volym går bra"), "motorn: varningen säger vad man KAN göra, inte bara vad som är fel"); }
+
+/* ---------- API-nyckeln lämnar aldrig backupen ---------- */
+{ const cfg = { ...DEFAULT_CFG, conn: { apiKey: "hemlignyckel1234", athleteId: "i123456", historyDays: 370 } };
+  const b = backupExport(emptyOverlay("p1"), "p1", "2026-08-05T10:00:00Z", cfg);
+  eq(b.cfg.conn.apiKey, "", "SÄKERHET: API-nyckeln följer ALDRIG med säkerhetskopian");
+  eq(b.cfg.conn.athleteId, "i123456", "backup: athlete-ID är inte hemligt och följer med");
+  eq(b.cfg.conn.historyDays, 370, "backup: historikfönstret följer med");
+  ok(!JSON.stringify(b).includes("hemlignyckel"), "SÄKERHET: nyckeln finns inte någonstans i kopian");
+  eq(cfg.conn.apiKey, "hemlignyckel1234", "backup: exporten muterar inte den levande konfigurationen"); }
+
+/* ---------- cfg bär anslutningen (D7: bindningar i profilen) ---------- */
+{ ok(validateCfg({ ...DEFAULT_CFG, conn: { apiKey: "abcdefghijkl", athleteId: "i123456" } }).ok,
+     "cfg: giltig anslutning passerar");
+  eq(validateCfg({ ...DEFAULT_CFG, conn: { apiKey: "abcdefghijkl", athleteId: "gurka" } }).ok, false,
+     "cfg: ogiltig anslutning gör hela cfg ogiltig — halvsparad anslutning finns inte");
+  eq(DEFAULT_CFG.conn.historyDays, ICU.defHistory, "cfg: standardhistoriken är ett år");
+  const st = makeStore(fakeStorage(1e6));
+  ok(st.saveCfg({ ...DEFAULT_CFG, conn: { apiKey: "abcdefghijkl", athleteId: "i123456", historyDays: 370 } }).ok,
+     "cfg: anslutningen sparas via samma kvotvaktade väg som allt annat");
+  ok(!st.saveCfg({ ...DEFAULT_CFG, conn: { apiKey: "kort", athleteId: "i123456" } }).ok,
+     "cfg: trasig anslutning skrivs aldrig"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 366;
+const EXPECTED_MIN = 506;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
