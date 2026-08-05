@@ -1331,7 +1331,35 @@ const ATH = { id: "i123456", name: "Niklas", icu_ftp: 262, sportSettings: [
      "zonparitet: zongränser som inte stiger är ett fel, inte en kuriositet");
   const noProfile = zoneParityFull(null, acts5);
   eq(noProfile.profile, false, "zonparitet: utan profil faller vi tillbaka på längdvakten");
-  ok(noProfile.why.includes("inte hämtad"), "zonparitet: avsaknaden av profil redovisas ärligt"); }
+  ok(noProfile.why.includes("inte hämtad"), "zonparitet: avsaknaden av profil redovisas ärligt");
+
+  /* swimHrValid (matchningsspec §3): undantaget är en INSTÄLLNING, inte en lag.
+     Med simdugligt bröstband (HRM-Pro/Swim/Tri) slås det av och sim granskas
+     som alla andra grenar. Spec-skuld inhägnad 2026-08-05. */
+  ok(!zoneParityFull(swimOnly, [], { swimHrValid: true }).ok,
+     "swimHrValid på: sim UTAN pulszoner blir nu ett riktigt paritetsfel");
+  ok(zoneParityFull(swimOnly, [], { swimHrValid: true }).mismatches.some(m => m.includes("swim")),
+     "swimHrValid på: felet namnger simmen");
+  ok(!zoneParityFull(projectAthlete(ATH).athlete, swimActs, { swimHrValid: true }).ok,
+     "swimHrValid på: 3-zonsvektorn på simpasset fångas mot profilens 5");
+  eq(zoneParityFull(swimOnly, []).swimHrValid, false,
+     "zonparitet redovisar vilket läge den granskade i");
+  eq(zoneParityFull(swimOnly, [], { swimHrValid: true }).swimHrValid, true,
+     "flaggan följer med i resultatet");
+  ok(zoneParityFull(projectAthlete(ATH).athlete, []).why.includes("utan pulsremsa"),
+     "zonparitet: undantagna grenar redovisas som undantagna, aldrig tyst utelämnade"); }
+
+/* ---------- swimHrValid som profilinställning (D7) ---------- */
+{ eq(DEFAULT_CFG.swimHrValid, false,
+     "swimHrValid: default AV — optisk handledspuls är inte mätdata (ingen falsk precision)");
+  ok(validateCfg({ ...DEFAULT_CFG, swimHrValid: true }).ok, "cfg: flaggan går att slå på");
+  ok(!validateCfg({ ...DEFAULT_CFG, swimHrValid: "ja" }).ok, "cfg: flaggan måste vara boolesk");
+  const st = makeStore(fakeStorage(1e6));
+  ok(st.saveCfg({ ...DEFAULT_CFG, swimHrValid: true }).ok,
+     "flaggan bor i profilen, inte i planen (D7)");
+  const b = backupExport(emptyOverlay("p1"), "p1", "2026-08-05", { ...DEFAULT_CFG, swimHrValid: true });
+  eq(b.cfg.swimHrValid, true,
+     "flaggan följer med säkerhetskopian — den är en inställning, inte en hemlighet"); }
 
 /* ---------- Återhämtning: dagssignal mot EGEN baslinje ---------- */
 const wSeries = (n, fn) => Array.from({ length: n }, (_, i) => {
@@ -1456,7 +1484,7 @@ eq(wellnessFlags([], "2026-08-05").length, 0, "alt C: utan data inga flaggor —
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 506;
+const EXPECTED_MIN = 517;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

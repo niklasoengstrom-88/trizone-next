@@ -459,7 +459,14 @@ function dataSection(h) {
   } else if ((c.wellness ?? []).length) {
     h.push(`<p class="hint">För lite wellnessdata för baslinjer än — signalerna tiger hellre än gissar.</p>`);
   }
-  h.push(`<div class="acts" style="margin-top:10px">
+  h.push(`<div class="eyebrow" style="margin-top:12px">Simpuls</div>
+    <p class="hint">Optisk handledspuls i vatten är inte mätdata — därför visas ingen zonremsa
+      på simpass som standard. Har du ett simdugligt bröstband (HRM-Pro/Swim/Tri) slår du på
+      remsan här. Simpuls ligger fysiologiskt lägre än landpuls; ett eget simoffset kan behövas
+      och beslutas då, inte nu.</p>
+    <div class="acts"><button class="modetog${S.cfg.swimHrValid ? " on" : ""}" data-swimhr
+      aria-pressed="${!!S.cfg.swimHrValid}">Pulsremsa på simpass: ${S.cfg.swimHrValid ? "på" : "av"}</button></div>
+    <div class="acts" style="margin-top:10px">
     <button class="ghostbtn" data-clearcache>Rensa datacachen</button></div>
     <p class="hint">Cachen är återskapbar med en hämtning och ingår därför aldrig i säkerhetskopian.</p>
   </section>`);
@@ -524,11 +531,16 @@ function outcome(s) {
   const min = Math.round(a.moving_time / 60);
   const km = a.distance > 0 ? ` · ${(a.distance / 1000).toFixed(1)} km` : "";
   let strip = "";
-  if (s.sport === "swim") strip = `<p class="hint">Simpuls (optisk) är ogiltig — ingen zonremsa. Tempo och distans gäller.</p>`;
+  /* Matchning §3: simremsan renderas först när simdugligt bröstband finns och
+     flaggan slagits på i profilen. Utan den: ingen låtsasremsa, tempo gäller. */
+  if (s.sport === "swim" && !S.cfg.swimHrValid)
+    strip = `<p class="hint">Simpuls (optisk) är ogiltig — ingen zonremsa. Tempo och distans gäller.</p>`;
   else if (s.sport !== "strength") {
     const zm = actZoneMinutes(a);
     strip = zm ? zstrip(zm.map((m, z) => [z + 1, m]).filter(p => p[1] > 0))
                : `<p class="hint">Ingen zondata i aktiviteten.</p>`;
+    if (zm && s.sport === "swim")
+      strip += `<p class="hint">Simpuls ligger fysiologiskt lägre än landpuls — remsan läses med det i minnet.</p>`;
     if (zm && S.zpar && !S.zpar.ok)                    /* §7: aldrig en tyst felkalibrerad remsa */
       strip += `<p class="hint bad">⚠ Zonparitet saknas — ${esc(S.zpar.why)}</p>`;
   }
@@ -703,7 +715,7 @@ function refreshData() {
   S.athlete = S.cache.athlete ?? null;
   S.bench = S.athlete ? benchmarksOf(S.athlete) : null;
   S.recov = (S.cache.wellness ?? []).length ? recovery(S.cache.wellness, today()) : null;
-  S.zpar = S.athlete ? zoneParityFull(S.athlete, src.activities) : zoneParity(src.activities);
+  S.zpar = S.athlete ? zoneParityFull(S.athlete, src.activities, S.cfg) : zoneParity(src.activities);
   if (S.plan) { recomputeMatches(); runEngine(); }
 }
 
@@ -931,7 +943,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -1031,6 +1043,16 @@ function wire() {
       return;
     }
     if (t.dataset.sync != null) { syncNow(); return; }
+    if (t.dataset.swimhr != null) {
+      const next = { ...S.cfg, swimHrValid: !S.cfg.swimHrValid };
+      const r = S.store.saveCfg(next);
+      if (!r.ok) { S.syncMsg = { text: r.error, bad: true }; render(); return; }
+      S.cfg = next;
+      S.syncMsg = { text: next.swimHrValid
+        ? "Pulsremsan på simpass är på. Zonpariteten granskar nu även simmens pulszoner i intervals.icu."
+        : "Pulsremsan på simpass är av. Simpass visar tempo och distans." };
+      refreshData(); render(); return;
+    }
     if (t.dataset.clearcache != null) {
       const r = S.store.clearCache();
       S.cache = emptyCache();

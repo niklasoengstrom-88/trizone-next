@@ -679,6 +679,7 @@ export const DEFAULT_CFG = { schedule: { 0:["Kväll"], 1:["Lunch","Kväll"], 2:[
                                          4:["Morgon","Kväll"], 5:["Morgon","Kväll"], 6:["Kväll"] },
                              athlete: null,          /* null = ingen vakt; sätts vid första planläsning */
                              engine: {},             /* överstyr ENGINE-defaults (P2: uppsättningen är data) */
+                             swimHrValid: false,     /* matchning §3: optisk handledspuls i vatten är ogiltig */
                              conn: { apiKey: "", athleteId: "", historyDays: 370 } };  /* fas B: anslutningen */
 
 /* Redigerbara motorvärden med gränser — allt annat i ENGINE är kodkonstant */
@@ -715,6 +716,8 @@ export function validateCfg(cfg) {
         errors.push({ where: `schedule.${d}`, why: `okänt fönster (väntat ${WINDOWS.join(" | ")})` });
     }
   }
+  if (cfg.swimHrValid !== undefined && typeof cfg.swimHrValid !== "boolean")
+    errors.push({ where: "cfg.swimHrValid", why: "måste vara true eller false" });
   if (cfg.conn !== undefined) {
     if (typeof cfg.conn !== "object" || cfg.conn === null)
       errors.push({ where: "cfg.conn", why: "inte ett objekt" });
@@ -1664,18 +1667,20 @@ export function zoneParity(activities) {
    atletprofil kan vi granska sanningen: intervals.icu:s faktiska zongränser.
    Appen har medvetet inget eget zonregister — profilen ÄR zonsanningen (F3,
    produktägarbeslut fas B). Vi läser, redovisar och varnar; vi justerar aldrig. */
-export function zoneParityFull(athlete, activities) {
+export function zoneParityFull(athlete, activities, cfg = {}) {
   const problems = [], rows = [];
+  /* Matchning §3: simpuls är ogiltig med optisk handledspuls. Med simdugligt
+     bröstband (HRM-Pro/Swim/Tri) slås flaggan på i profilen och sim granskas
+     som vilken gren som helst. Undantaget är alltså en INSTÄLLNING, inte en lag. */
+  const swimOK = !!cfg.swimHrValid;
+  const exempt = sp => sp === "strength" || (sp === "swim" && !swimOK);
   const sports = athlete?.sports ?? null;
   if (!sports || !Object.keys(sports).length)
-    return { ...zoneParity(activities), profile: false,
+    return { ...zoneParity(activities), profile: false, swimHrValid: swimOK,
              why: (zoneParity(activities).why) + " · atletprofilen inte hämtad än — gränserna kan inte granskas" };
 
   for (const [sport, s] of Object.entries(sports)) {
-    /* Simundantaget (matchningsspec §7): pulszoner i vatten är ogiltiga med optisk
-       handledspuls, så deras avsaknad är korrekt läge — inte ett paritetsfel.
-       Styrka har heller ingen zonremsa. Att flagga dessa vore falskt larm. */
-    if (sport === "swim" || sport === "strength") {
+    if (exempt(sport)) {
       rows.push({ sport, zones: s.zones?.length ?? null, bounds: s.zones, lthr: s.lthr, exempt: true });
       continue;
     }
@@ -1697,17 +1702,19 @@ export function zoneParityFull(athlete, activities) {
     (bySport[sp] ??= new Set()).add(z.length);
   }
   for (const [sp, lens] of Object.entries(bySport)) {
-    if (sp === "swim" || sp === "strength") continue;
+    if (exempt(sp)) continue;
     const want = sports[sp]?.zones?.length ?? ZONE_COUNT;
     const bad = [...lens].filter(n => n !== want);
     if (bad.length) problems.push(`${sp}: aktiviteter med ${bad.join("/")} zoner mot profilens ${want}`);
   }
 
-  const shown = rows.map(r => `${r.sport} ${r.zones ?? "–"}${r.lthr ? ` (LTHR ${r.lthr})` : ""}`).join(" · ");
+  const shown = rows.map(r => `${r.sport} ${r.zones ?? "–"}${r.lthr ? ` (LTHR ${r.lthr})` : ""}` +
+                              (r.exempt ? " (utan pulsremsa)" : "")).join(" · ");
   if (!problems.length)
-    return { ok: true, profile: true, rows, mismatches: [], checked: (activities ?? []).length,
-             why: `zonparitet mot intervals.icu: ${shown}` };
-  return { ok: false, profile: true, rows, mismatches: problems, checked: (activities ?? []).length,
+    return { ok: true, profile: true, swimHrValid: swimOK, rows, mismatches: [],
+             checked: (activities ?? []).length, why: `zonparitet mot intervals.icu: ${shown}` };
+  return { ok: false, profile: true, swimHrValid: swimOK, rows, mismatches: problems,
+           checked: (activities ?? []).length,
            why: problems.join(" · ") + " — rätta i intervals.icu (Settings → Zones) och hämta om." };
 }
 

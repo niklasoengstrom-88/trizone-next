@@ -1,6 +1,6 @@
 # BESLUT 0.10.0 — fas B: egen datapipeline mot intervals.icu
 
-**Datum:** 2026-08-05 · **Från:** 0.9.4 · **Tester:** 506 kärna (från 366) + 195 rök (från 139)
+**Datum:** 2026-08-05 · **Från:** 0.9.4 · **Tester:** 517 kärna (från 366) + 208 rök (från 139)
 
 ---
 
@@ -16,6 +16,8 @@
 | **B6** | Sömntröskel | **Relativ mot egen baslinje**, aldrig absolut. v32:s 6,2 h hade fyrat halva året för en småbarnsförälder, och en nivå 1-regel man lärt sig klicka bort är sämre än ingen regel. Tröskel: 1,5 h under egen median. |
 | **B7** | Synk-kadens | Auto vid boot efter första ritningen, spärr 15 min · manuell "Uppdatera nu" · "Testa anslutningen". Offline ⇒ cachen gäller, med hämtningstidpunkt redovisad. |
 
+| **B8** | Simpuls | **`swimHrValid` byggd** (matchningsspec §3, tidigare spec-skuld). Default av. Slås på i Inställningar när simdugligt bröstband finns; då renderas simremsan och zonpariteten granskar simmens pulszoner som alla andras. Simoffset byggs **inte** nu — beslutas när flaggan faktiskt slås på och verkliga simpulsvärden finns att jämföra. |
+
 ## Spec-avsteg som kräver stämpel
 
 **A1 — regelkatalogens tak.** Regelverk §6: *"kärnkatalogen håller sig under 15 regler."* Med `recovery-watch` går katalogen från 14 till **15** — på taket, inte under. Alternativen var: revidera §6, slå ihop med `rpe-watch`, eller låta trendsignalen bara vara en rad i Data-sektionen utan att vara motorregel.
@@ -28,11 +30,13 @@
 
 **2. Röksviten saknade svitvakt.** Kärnsviten fick `EXPECTED_MIN` efter incidenten 2026-08-02; röksviten fick den aldrig. Nu har båda.
 
-**3. Stämpeltestet krävde handpåläggning.** Röktestet hårdkodade `next-0.9.4` och blev rött av bumpen. Det läser nu `UI_BUILD` ur koden och verifierar pariteten separat — testet fångar bruten paritet i stället för att vara en påminnelselapp.
+**3. Simpulsflaggan var spec-skuld.** Matchningsspec §3 beslutade `swimHrValid` redan i v0.2; den var aldrig byggd, och undantaget låg hårdkodat i två filer. Nu är det en profilinställning, inhägnad av 9 kärnfixturer och 8 röktester.
+
+**4. Stämpeltestet krävde handpåläggning.** Röktestet hårdkodade `next-0.9.4` och blev rött av bumpen. Det läser nu `UI_BUILD` ur koden och verifierar pariteten separat — testet fångar bruten paritet i stället för att vara en påminnelselapp.
 
 ## Nytt i core.js
 
-`ICU` · `validateConn` · `connReady` · `icuRequest` · `proxyAllowed` · `icuError` · `CACHE_VERSION` · `emptyCache` · `trimCache` · `projectActivities` · `projectWellness` · `projectAthlete` · `benchmarksOf` · `pickActivitySource` · `zoneParityFull` · `RECOV` · `recovery` · `wellnessFlags` · `V32_CACHE_KEY` · `KEYS.cache` · `DEFAULT_CFG.conn` · `makeStore.{loadCache, saveCache, clearCache}`
+`ICU` · `validateConn` · `connReady` · `icuRequest` · `proxyAllowed` · `icuError` · `CACHE_VERSION` · `emptyCache` · `trimCache` · `projectActivities` · `projectWellness` · `projectAthlete` · `benchmarksOf` · `pickActivitySource` · `zoneParityFull` · `RECOV` · `recovery` · `wellnessFlags` · `DEFAULT_CFG.swimHrValid` · `V32_CACHE_KEY` · `KEYS.cache` · `DEFAULT_CFG.conn` · `makeStore.{loadCache, saveCache, clearCache}`
 
 **Ändrat:** `validateCfg` validerar `conn` · `backupExport` strippar `apiKey` · `applyRules` känner `recovery-watch` · `sleep-guard`-frågan bär sin härledda orsak.
 

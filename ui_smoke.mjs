@@ -76,8 +76,12 @@ const ICU_ACTIVITIES = [
     moving_time: 100 * 60, distance: 50000 },
   { id: 903, type: "Swim", name: "Morgonsim", start_date_local: "2026-10-16T06:40:00",
     moving_time: 30 * 60, distance: 1500 },
-  { id: 904, type: "Run", name: "Egen extraløpning", start_date_local: "2026-10-17T07:00:00",
-    moving_time: 40 * 60, distance: 8000 }];
+  { id: 904, type: "Run", name: "Egen extralöpning", start_date_local: "2026-10-17T07:00:00",
+    moving_time: 40 * 60, distance: 8000 },
+  /* Matchar måndagens sk-w42-swim-css — bär zondata så att remsan KAN renderas
+     när swimHrValid slås på, och tigas när den är av. */
+  { id: 905, type: "Swim", name: "CSS-intervaller", start_date_local: "2026-10-13T18:10:00",
+    moving_time: 45 * 60, distance: 2200, icu_hr_zone_times: [600, 900, 600, 500, 100] }];
 const ICU_ATHLETE = { id: "i123456", name: "Niklas", icu_ftp: 262, sportSettings: [
   { types: ["Ride", "VirtualRide"], hr_zones: [120, 140, 155, 168, 185], lthr: 168, ftp: 262 },
   { types: ["Run"], hr_zones: [128, 148, 162, 173, 190], lthr: 173, threshold_pace: 2.967 },
@@ -509,7 +513,7 @@ ok(icuCalls.length === 4, "Uppdatera nu gör exakt tre anrop (aktiviteter, welln
 ok(icuCalls.some(c => c.url.includes("/activities?oldest=")), "aktivitetsanropet bär historikfönstret");
 ok(mem.has("trizone.next.cache.v1"), "hämtningen skriver till EGEN cachenyckel");
 { const c = JSON.parse(mem.get("trizone.next.cache.v1"));
-  ok(c.activities.length === 4, "alla aktiviteter projiceras in");
+  ok(c.activities.length === 5, "alla aktiviteter projiceras in");
   ok(!("kudos_count" in c.activities.find(a => a.id === 901)),
      "okända fält vitlistas bort på vägen in (F5)");
   ok(c.activities.find(a => a.id === 901).icu_rpe === 6, "icu_rpe följer med i egen projektion");
@@ -572,7 +576,7 @@ icuState.status = 401;
 clickBtn({ sync: "" });
 await new Promise(r => setTimeout(r, 30));
 has(els.app.innerHTML, "nyckeln avvisades", "401 förklaras som fel nyckel, inte 'något gick fel'");
-ok(JSON.parse(mem.get("trizone.next.cache.v1")).activities.length === 4,
+ok(JSON.parse(mem.get("trizone.next.cache.v1")).activities.length === 5,
    "misslyckad hämtning lämnar den gamla cachen orörd");
 icuState.status = 200;
 
@@ -584,6 +588,34 @@ ok(JSON.parse(mem.get("trizone.next.cache.v1")).wellness.length === 35,
    "wellness-facket behåller sitt gamla värde när dess anrop failar (patch-semantik)");
 icuState.throwOn = null;
 
+/* swimHrValid: reglaget finns, är av från start, och styr både remsa och paritet */
+has(els.app.innerHTML, "Simpuls", "simpulsavsnittet finns i Inställningar");
+has(els.app.innerHTML, "Pulsremsa på simpass: av", "reglaget är AV från start");
+has(els.app.innerHTML, "simdugligt bröstband", "det sägs vad som krävs för att slå på det");
+has(els.app.innerHTML, "utan pulsremsa", "zonparitetsraden redovisar sim som undantagen");
+clickBtn({ nav: "plan" });
+tapCard("sk-w42-swim-css");
+has(els.app.innerHTML, "Simpuls (optisk) är ogiltig", "simpass visar tempo, aldrig en låtsasremsa");
+clickBtn({ cancel: "" });
+clickBtn({ nav: "installningar" });
+clickBtn({ swimhr: "" });
+has(els.app.innerHTML, "Pulsremsa på simpass: på", "reglaget går att slå på");
+has(els.app.innerHTML, "granskar nu även simmens", "påslaget förklarar vad det innebär");
+ok(JSON.parse(mem.get("trizone.next.cfg.v1")).swimHrValid === true,
+   "swimHrValid sparas i profilen (D7), inte i planen");
+ok(!els.app.innerHTML.includes("utan pulsremsa"),
+   "med flaggan på granskas sim som alla andra grenar");
+clickBtn({ nav: "plan" });
+tapCard("sk-w42-swim-css");
+ok(!els.app.innerHTML.includes("Simpuls (optisk) är ogiltig"),
+   "med flaggan på försvinner ursäkten — remsan renderas");
+has(els.app.innerHTML, "fysiologiskt lägre", "simremsan bär sin tolkningsnot (matchning §3)");
+clickBtn({ cancel: "" });
+clickBtn({ nav: "installningar" });
+clickBtn({ swimhr: "" });
+has(els.app.innerHTML, "Pulsremsa på simpass: av", "reglaget går att slå av igen");
+ok(JSON.parse(mem.get("trizone.next.cfg.v1")).swimHrValid === false, "avslaget sparas också");
+
 /* Cachen går att rensa — och då gäller v32 igen */
 clickBtn({ clearcache: "" });
 ok(!mem.has("trizone.next.cache.v1"), "datacachen går att rensa");
@@ -591,7 +623,7 @@ has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på 
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 195;
+const EXPECTED_MIN = 208;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
