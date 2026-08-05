@@ -12,11 +12,11 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          ICU, connReady, validateConn, icuRequest, icuError, proxyAllowed,
          projectActivities, projectWellness, projectAthlete, benchmarksOf,
          pickActivitySource, zoneParityFull, recovery, wellnessFlags,
-         emptyCache, V32_CACHE_KEY, statusGrid, pmcStatus, effTrend, zoneBand,
+         emptyCache, V32_CACHE_KEY, statusGrid, pmcStatus, effTrend, zoneBand, dailyLoads, dayShift,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.12.0 · 2026-08-05";
+export const UI_BUILD = "next-0.13.0 · 2026-08-05";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -25,7 +25,7 @@ const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:nu
             view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[],
             /* fas B: egen datapipeline */
             cache:emptyCache(), src:null, athlete:null, bench:null, recov:null,
-            connMsg:null, syncing:false, syncMsg:null, lastSync:0, dimOpen:null, effSport:"run", effZone:2 };
+            connMsg:null, syncing:false, syncMsg:null, lastSync:0, dimOpen:null, effSport:"run", effZone:2, effRange:370, effSel:null, pmcRange:90, pmcSel:null };
 const actById = id => S.acts.find(a => a.id === id);
 let D = dragIdle, ghost = null, zones = [], zoneEls = new Map(), hotEl = null,
     rafId = 0, holdTimer = 0, swallowUntil = 0;   /* spökklick efter pointerup (0.5.2-buggen) */
@@ -543,45 +543,92 @@ function renderAnalys(h) {
       när de kan ritas ur mätdata — aldrig ur skattningar.</p></section>`);
 }
 
-/* ---------- PMC: fitness, trötthet, form ---------- */
+/* ---------- PMC: fitness, trötthet, form (0.13.0: intervall, staplar, tryckbar) ---------- */
+const PMC_RANGES = [[30, "1M"], [90, "3M"], [180, "6M"], [370, "Säsong"]];
+const LOADCOLORS = [["swim", "Sim"], ["bike", "Cykel"], ["run", "Löp"], ["strength", "Styrka"]];
+
 function pmcSection(h) {
-  const p = pmcStatus(S.cache?.wellness ?? [], today(), 84);
-  h.push(`<section class="setsec"><div class="eyebrow">Form · fitness och trötthet · 12 veckor</div>`);
-  if (!p.has) {
-    h.push(`<p class="hint">${esc(p.why)}</p></section>`);
-    return;
+  const range = S.pmcRange;
+  const p = pmcStatus(S.cache?.wellness ?? [], today(), range);
+  h.push(`<section class="setsec"><div class="eyebrow">Form · fitness och trötthet</div>
+    <div class="chips">${PMC_RANGES.map(([d, l]) =>
+      `<button class="chip${range === d ? " on" : ""}" data-pmcrange="${d}">${l}</button>`).join("")}</div>`);
+
+  /* v32:s inforuta — ger mer än en vilopulskurva (produktägarbeslut 0.13.0) */
+  const rc = S.recov;
+  if (rc?.has) {
+    const d = rc.day, tr = rc.trend;
+    h.push(`<div class="kv">
+      ${d.sleep3 != null ? `<span class="k">Sömn 3 nätter</span><span class="v">${d.sleep3} h</span>` : ""}
+      ${d.rhr != null ? `<span class="k">Vilopuls</span><span class="v${d.flags.rhr ? " bad" : ""}">${d.rhr} <span class="dim">(baslinje ${d.rhrBase})</span></span>` : ""}
+      ${tr.hrv != null ? `<span class="k">HRV</span><span class="v${tr.flags.hrv ? " bad" : ""}">${tr.hrv} ms <span class="dim">(baslinje ${tr.hrvBase} ms)</span></span>` : ""}
+    </div>
+    <p class="hint">Avvikande vilopuls (≥ +${RECOV_DELTA} bpm mot din baslinje) gör att motorn
+      frågar om dagens kvalitetspass — den ändrar aldrig något själv.</p>`);
   }
-  const s = p.series, n = s.length;
-  const vals = s.flatMap(d => [d.ctl, d.atl]);
+  if (!p.has) { h.push(`<p class="hint">${esc(p.why)}</p></section>`); return; }
+
+  const loads = dailyLoads(S.acts ?? [], today(), range);
+  const n = Math.max(loads.length, 1), ix = Object.fromEntries(loads.map((l, i) => [l.date, i]));
+  const vals = p.series.flatMap(d => [d.ctl, d.atl]);
   const lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 1);
-  const line = key => s.map((d, i) =>
-    `${(i / Math.max(n - 1, 1) * 100).toFixed(1)},${(100 - (d[key] - lo) / span * 100).toFixed(1)}`).join(" ");
-  h.push(`<svg class="spark tall" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+  const yLine = v => (62 - (v - lo) / span * 58).toFixed(1);      /* linjer i bandet 4–62 */
+  const line = key => p.series.map(d =>
+    `${((ix[d.date] ?? 0) / Math.max(n - 1, 1) * 100).toFixed(2)},${yLine(d[key])}`).join(" ");
+  const maxL = Math.max(...loads.map(l => l.total), 1);
+  const bw = 100 / n;
+  let bars = "";
+  for (let i = 0; i < loads.length; i++) {
+    const l = loads[i]; if (!l.total) continue;
+    let y = 100;
+    for (const [sp] of LOADCOLORS) { if (!l[sp]) continue;
+      const hgt = l[sp] / maxL * 32; y -= hgt;
+      bars += `<rect x="${(i * bw).toFixed(2)}" y="${y.toFixed(1)}" width="${Math.max(bw * 0.72, 0.18).toFixed(2)}" height="${hgt.toFixed(1)}" fill="var(--${sp})" opacity=".85"/>`; }
+  }
+  const taps = loads.map((l, i) =>
+    `<rect x="${(i * bw).toFixed(2)}" y="0" width="${bw.toFixed(2)}" height="100" fill="transparent" data-pmcday="${l.date}"/>`).join("");
+  const sx = S.pmcSel != null && ix[S.pmcSel] != null ? (ix[S.pmcSel] / Math.max(n - 1, 1) * 100).toFixed(2) : null;
+
+  h.push(`<div class="chartwrap"><div class="ylab"><span>${Math.round(hi)}</span><span>${Math.round(lo)}</span></div>
+    <svg class="spark tall" viewBox="0 0 100 100" preserveAspectRatio="none">
+      ${bars}${sx != null ? `<line x1="${sx}" y1="0" x2="${sx}" y2="100" stroke="var(--faint)" stroke-width=".5" stroke-dasharray="2 2"/>` : ""}
       <polyline points="${line("ctl")}" fill="none" stroke="var(--info)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
       <polyline points="${line("atl")}" fill="none" stroke="var(--warn)" stroke-width="1.4" vector-effect="non-scaling-stroke"/>
-    </svg>
+      ${taps}</svg></div>
+    <div class="xlab"><span>${esc(loads[0]?.date ?? "")}</span><span>Tryck i grafen för en dag</span><span>${esc(loads[loads.length - 1]?.date ?? "")}</span></div>
     <div class="legend"><span><i class="sw" style="background:var(--info)"></i>Fitness (CTL)</span>
-      <span><i class="sw" style="background:var(--warn)"></i>Trötthet (ATL)</span></div>
-    <div class="kv">
-      <span class="k">Form (TSB)</span><span class="v">${p.tsb > 0 ? "+" : ""}${p.tsb} · ${esc(p.label)}</span>
-      <span class="k">Fitness / trötthet</span><span class="v">${p.ctl} / ${p.atl}</span>
-      <span class="k">Spann</span><span class="v">${Math.round(lo)}–${Math.round(hi)}</span>
-    </div>
+      <span><i class="sw" style="background:var(--warn)"></i>Trötthet (ATL)</span>
+      <span><i class="sw" style="background:var(--run)"></i>Belastning/dag, grenfärg</span></div>`);
+
+  if (S.pmcSel != null && ix[S.pmcSel] != null) {
+    const sd = p.series.find(x => x.date === S.pmcSel), ld = loads[ix[S.pmcSel]];
+    const parts = [];
+    if (sd) parts.push(`Form ${sd.tsb > 0 ? "+" : ""}${sd.tsb} · Fitness ${sd.ctl} · Trötthet ${sd.atl}`);
+    const lp = LOADCOLORS.filter(([k]) => ld?.[k]).map(([k, lbl]) => `${lbl} ${Math.round(ld[k])} TSS`).join(" · ");
+    parts.push(lp || "Vilodag");
+    h.push(`<p class="ptdetail">${esc(S.pmcSel)} · ${parts.join(" · ")}</p>`);
+  }
+
+  h.push(`<div class="kv"><span class="k">Form (TSB)</span><span class="v">${p.tsb > 0 ? "+" : ""}${p.tsb} · ${esc(p.label)}</span>
+      <span class="k">Fitness / trötthet</span><span class="v">${p.ctl} / ${p.atl}</span></div>
     <p class="hint">${esc(p.why)}</p>
     <p class="hint">Riktvärdena för vad ett TSB-tal betyder är litteraturens, inte dina —
       läs siffran mot hur benen känns, inte tvärtom.</p></section>`);
 }
 
-/* ---------- Effektivitet per gren: samma puls, bättre output ---------- */
+/* ---------- Effektivitet per gren (0.13.0: axlar, datum, tryckbara punkter) ---------- */
 const EFFSPORTS = [["run", "Löpning"], ["bike", "Cykel"], ["swim", "Simning"]];
+const EFF_RANGES = [[90, "3M"], [180, "6M"], [370, "Säsong"]];
 
 function effSection(h) {
-  const sport = S.effSport, zone = S.effZone;
-  const t = effTrend(S.acts ?? [], S.athlete, sport, zone);
+  const sport = S.effSport, zone = S.effZone, range = S.effRange;
+  const t = effTrend(S.acts ?? [], S.athlete, sport, zone, { from: dayShift(today(), -range) });
   h.push(`<section class="setsec"><div class="eyebrow">Aerob effektivitet</div>
     <p class="hint">Samma puls, bättre output = progression. Uppmätt, aldrig prognos.</p>
     <div class="chips">${EFFSPORTS.map(([id, label]) =>
-      `<button class="chip${sport === id ? " on" : ""}" data-effsport="${id}">${label}</button>`).join("")}</div>`);
+      `<button class="chip${sport === id ? " on" : ""}" data-effsport="${id}">${label}</button>`).join("")}</div>
+    <div class="chips">${EFF_RANGES.map(([d, l]) =>
+      `<button class="chip${range === d ? " on" : ""}" data-effrange="${d}">${l}</button>`).join("")}</div>`);
 
   if (sport !== "swim") {
     h.push(`<div class="chips">${[2, 3].map(z => {
@@ -601,16 +648,30 @@ function effSection(h) {
   const ys = t.points.map(p => p.y);
   const lo = Math.min(...ys), hi = Math.max(...ys), span = Math.max(hi - lo, 1);
   const col = { run: "var(--run)", bike: "var(--bike)", swim: "var(--swim)" }[sport];
-  /* Lägre är bättre för tempo ⇒ y-axeln vänds så att UPPÅT alltid = bättre */
-  const yOf = v => t.lowerBetter ? (v - lo) / span * 100 : 100 - (v - lo) / span * 100;
-  const dots = t.points.map((p, i) =>
-    `<circle cx="${(i / Math.max(t.points.length - 1, 1) * 100).toFixed(1)}"
-       cy="${yOf(p.y).toFixed(1)}" r="1.6" fill="${col}"/>`).join("");
-  h.push(`<svg class="spark tall" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      <line x1="0" y1="${yOf(t.first).toFixed(1)}" x2="100" y2="${yOf(t.last).toFixed(1)}"
-        stroke="${col}" stroke-width="1.2" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
-      ${dots}</svg>
-    <p class="hint">Uppåt i grafen = bättre. ${esc(t.why)}</p></section>`);
+  const yOf = v => t.lowerBetter ? (v - lo) / span * 88 + 6 : 94 - (v - lo) / span * 88;
+  const xOf = i => (i / Math.max(t.points.length - 1, 1) * 96 + 2).toFixed(1);
+  const dots = t.points.map((p, i) => {
+    const seld = S.effSel === i;
+    return `<circle cx="${xOf(i)}" cy="${yOf(p.y).toFixed(1)}" r="${seld ? 2.6 : 1.7}" fill="${col}"
+        ${seld ? `stroke="var(--ink)" stroke-width=".6"` : ""}/>
+      <circle cx="${xOf(i)}" cy="${yOf(p.y).toFixed(1)}" r="6" fill="transparent" data-effpt="${i}"/>`;
+  }).join("");
+  const topLab = t.fmt(t.lowerBetter ? lo : hi), botLab = t.fmt(t.lowerBetter ? hi : lo);
+
+  h.push(`<div class="chartwrap"><div class="ylab"><span>${esc(topLab)}</span><span>${esc(botLab)}</span></div>
+    <svg class="spark tall" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <line x1="0" y1="6" x2="100" y2="6" stroke="var(--line-soft)" stroke-width=".4"/>
+      <line x1="0" y1="94" x2="100" y2="94" stroke="var(--line-soft)" stroke-width=".4"/>
+      <line x1="${xOf(0)}" y1="${yOf(t.first).toFixed(1)}" x2="${xOf(t.points.length - 1)}" y2="${yOf(t.last).toFixed(1)}"
+        stroke="${col}" stroke-width="1.1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke" opacity=".8"/>
+      ${dots}</svg></div>
+    <div class="xlab"><span>${esc(t.from)}</span><span>Tryck på en punkt</span><span>${esc(t.to)}</span></div>`);
+
+  if (S.effSel != null && t.points[S.effSel]) {
+    const p = t.points[S.effSel];
+    h.push(`<p class="ptdetail">${esc(p.date)} · ${esc(t.fmt(p.y))}${p.hr ? ` @ ${Math.round(p.hr)} bpm` : ""}</p>`);
+  }
+  h.push(`<p class="hint">Uppåt i grafen = bättre. ${esc(t.why)}</p></section>`);
 }
 
 function renderSettings(h) {
@@ -1084,7 +1145,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone]");
+    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -1185,8 +1246,13 @@ function wire() {
     }
     if (t.dataset.sync != null) { syncNow(); return; }
     if (t.dataset.dim) { S.dimOpen = S.dimOpen === t.dataset.dim ? null : t.dataset.dim; render(); return; }
-    if (t.dataset.effsport) { S.effSport = t.dataset.effsport; render(); return; }
-    if (t.dataset.effzone) { S.effZone = Number(t.dataset.effzone); render(); return; }
+    if (t.dataset.effsport) { S.effSport = t.dataset.effsport; S.effSel = null; render(); return; }
+    if (t.dataset.effzone) { S.effZone = Number(t.dataset.effzone); S.effSel = null; render(); return; }
+    if (t.dataset.effrange) { S.effRange = Number(t.dataset.effrange); S.effSel = null; render(); return; }
+    if (t.dataset.effpt != null) { const i = Number(t.dataset.effpt);
+      S.effSel = S.effSel === i ? null : i; render(); return; }
+    if (t.dataset.pmcrange) { S.pmcRange = Number(t.dataset.pmcrange); S.pmcSel = null; render(); return; }
+    if (t.dataset.pmcday) { S.pmcSel = S.pmcSel === t.dataset.pmcday ? null : t.dataset.pmcday; render(); return; }
     if (t.dataset.swimhr != null) {
       const next = { ...S.cfg, swimHrValid: !S.cfg.swimHrValid };
       const r = S.store.saveCfg(next);

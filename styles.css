@@ -1,4 +1,4 @@
-/* TRIZONE Next — styles.css · BUILD next-0.12.0 · 2026-08-05
+/* TRIZONE Next — styles.css · BUILD next-0.13.0 · 2026-08-05
    Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
 :root{
   --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
@@ -391,3 +391,14 @@ main{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
   font-variant-numeric:tabular-nums;cursor:pointer}
 .chip.on{color:var(--ink);border-color:var(--accent);background:var(--surface-hi)}
 .chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- Analys · axlar och punktdetaljer (0.13.0) ---------- */
+.chartwrap{display:flex;gap:8px;margin-top:12px;align-items:stretch}
+.chartwrap .spark{margin-top:0;flex:1}
+.ylab{display:flex;flex-direction:column;justify-content:space-between;padding:2px 0;
+  font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums;text-align:right;min-width:34px}
+.xlab{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);
+  margin-top:4px;font-variant-numeric:tabular-nums}
+.ptdetail{margin-top:8px;padding:8px 12px;border-left:3px solid var(--accent);
+  background:var(--surface-hi);border-radius:0 10px 10px 0;font-size:13px;
+  font-variant-numeric:tabular-nums;color:var(--ink)}

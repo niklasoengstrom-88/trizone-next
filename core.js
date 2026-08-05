@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.12.0 · 2026-08-05";
+export const BUILD = "next-0.13.0 · 2026-08-05";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -773,7 +773,7 @@ export function connReady(conn) {
 const b64 = s => typeof btoa === "function" ? btoa(s)
   : typeof Buffer !== "undefined" ? Buffer.from(s, "binary").toString("base64") : s;
 
-const dayShift = (iso, n) => {
+export const dayShift = (iso, n) => {
   const d = new Date(String(iso).slice(0, 10) + "T00:00:00Z");
   if (isNaN(d)) return null;
   d.setUTCDate(d.getUTCDate() + n);
@@ -1278,7 +1278,7 @@ export function edgeScroll(y, viewportH) {
    utfallsvisningen använder (matchning §3, F5). */
 const ACT_FIELDS = ["id", "type", "name", "start_date_local", "moving_time", "distance",
   "trainer", "icu_hr_zone_times", "icu_training_load", "average_heartrate", "icu_average_hr",
-  "average_watts", "icu_average_watts", "has_device_watts", "average_cadence",
+  "average_watts", "icu_average_watts", "has_device_watts", "device_watts", "average_cadence",
   "icu_rpe", "feel", "perceived_exertion"];   /* 0.8.0: klockans självskattning följer med */
 const looksLikeActivity = a => a && typeof a === "object" &&
   a.id != null && typeof a.type === "string" && (a.start_date_local || a.start_date);
@@ -1789,6 +1789,7 @@ export function recovery(wellness, todayISO, opts = {}) {
     if (base.length >= R.minSleepBase) {
       const b = median(base);
       day.date ??= lastS.d; day.sleepH = r1(lastS.v); day.sleepBase = r1(b); day.sleepDelta = r1(lastS.v - b);
+      day.sleep3 = r1(mean(sleep.slice(-3).map(x => x.v)));    /* v32:s inforuta: Sömn 3 nätter */
       if (b - lastS.v >= R.sleepDayDeltaH) { day.flags.sleep = true;
         day.why.push(`Sömnen ${r1(lastS.v)} h mot din normal ${r1(b)} h`); }
     }
@@ -1910,12 +1911,13 @@ export function effTrend(activities, athlete, sport, zone = 2, opts = {}) {
     return { has: false, points: [], sport, zone,
              why: `Inga pulszoner för ${sport} i intervals.icu — fönstret kan inte härledas.` };
 
-  const raw = [], skipped = { est: 0, trainer: 0, short: 0, band: 0 };
+  const raw = [], skipped = { est: 0, trainer: 0, short: 0, band: 0, window: 0 };
   for (const a of activities ?? []) {
     if (SPORT_MAP[a.type] !== sport) continue;
     const secs = Number(a.moving_time) || 0, dist = Number(a.distance) || 0;
     const date = matchDate(a.start_date_local);
     if (!date) continue;
+    if (O.from && date < O.from) { skipped.window++; continue; }
 
     if (sport === "swim") {
       if (dist < O.minSwimMeters) { skipped.short++; continue; }
@@ -1927,8 +1929,11 @@ export function effTrend(activities, athlete, sport, zone = 2, opts = {}) {
     if (!Number.isFinite(hr) || hr < band.lo || hr > band.hi) { skipped.band++; continue; }
 
     if (sport === "bike") {
-      /* Ärvd regel: watt utan mätare är Stravas estimat och används ALDRIG */
-      if (a.has_device_watts !== true) { skipped.est++; continue; }
+      /* Ärvd regel: watt utan mätare är Stravas estimat och används ALDRIG.
+         BUGGFIX 2026-08-05 (fältverifierad: 34 spinningpass försvann): API-fältet
+         heter device_watts — v32:s fälttestade läsning, rad 2028. has_device_watts
+         var specens BEGREPPSNAMN, inte fältnamnet. Båda accepteras. */
+      if (a.has_device_watts !== true && a.device_watts !== true) { skipped.est++; continue; }
       const w = Number(a.average_watts ?? a.icu_average_watts);
       if (!Number.isFinite(w) || w <= 0) { skipped.est++; continue; }
       raw.push({ date, y: w, unit: "W", hr });                       /* högre = bättre */
@@ -1968,6 +1973,26 @@ export function effTrend(activities, athlete, sport, zone = 2, opts = {}) {
               + `${better ? "Samma puls, bättre output — progression." : "Ingen förbättring i fönstret."}`
               + (notes.length ? " " + notes.join(" · ") + "." : ""),
            fmt };
+}
+
+/* Belastning per dag och gren (TSS ur icu_training_load) — v32:s stapelmodell.
+   En rad per dag i fönstret, nollor där inget hände, så staplarna får rätt raster. */
+export function dailyLoads(activities, todayISO, days) {
+  const from = dayShift(todayISO, -days);
+  if (!from) return [];
+  const map = {};
+  for (const a of activities ?? []) {
+    const d = matchDate(a.start_date_local);
+    if (!d || d < from || d > todayISO) continue;
+    const sp = SPORT_MAP[a.type]; if (!sp) continue;
+    const load = Number(a.icu_training_load) || 0; if (load <= 0) continue;
+    map[d] ??= { date: d, swim: 0, bike: 0, run: 0, strength: 0, total: 0 };
+    map[d][sp] += load; map[d].total += load;
+  }
+  const out = [];
+  for (let d = from; d && d <= todayISO; d = dayShift(d, 1))
+    out.push(map[d] ?? { date: d, swim: 0, bike: 0, run: 0, strength: 0, total: 0 });
+  return out;
 }
 
 /* ================================================================

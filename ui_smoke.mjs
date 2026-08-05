@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.12.0 · 2026-08-05
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.13.0 · 2026-08-05
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.12.0 · 2026-08-05" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.13.0 · 2026-08-05" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -72,9 +72,10 @@ const ICU_WELLNESS = Array.from({ length: 35 }, (_, i) => ({
 const ICU_ACTIVITIES = [
   { id: 901, type: "Run", name: "Löpintervaller tröskel", start_date_local: "2026-10-15T18:05:00",
     moving_time: 52 * 60, distance: 10400, icu_hr_zone_times: [720, 360, 120, 1500, 420],
-    icu_rpe: 6, feel: 4, kudos_count: 9 },
-  { id: 902, type: "Ride", name: "Kort cykel", start_date_local: "2026-10-16T18:00:00",
-    moving_time: 100 * 60, distance: 50000 },
+    icu_rpe: 6, feel: 4, kudos_count: 9, icu_training_load: 55 },
+  { id: 902, type: "Ride", name: "Spinning", start_date_local: "2026-10-14T18:00:00",
+    moving_time: 100 * 60, distance: 50000, average_heartrate: 130,
+    average_watts: 178, device_watts: true, icu_training_load: 60 },
   { id: 903, type: "Swim", name: "Morgonsim", start_date_local: "2026-10-16T06:40:00",
     moving_time: 30 * 60, distance: 1500 },
   { id: 904, type: "Run", name: "Egen extralöpning", start_date_local: "2026-10-17T07:00:00",
@@ -324,7 +325,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.12.0 · 2026-08-05", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.13.0 · 2026-08-05", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -689,6 +690,31 @@ clickBtn({ effzone: "2" });
 
 clickBtn({ nav: "installningar" });
 
+/* ---------- 0.13.0: wattregression, intervall, inforuta, tryckbara grafer ---------- */
+clickBtn({ nav: "analys" });
+has(els.app.innerHTML, "Sömn 3 nätter", "v32:s inforuta finns — sömn, vilopuls, HRV mot baslinje");
+has(els.app.innerHTML, "baslinje", "inforutan redovisar baslinjerna");
+has(els.app.innerHTML, "1M", "PMC har tidsintervallväljare");
+has(els.app.innerHTML, "Tryck i grafen för en dag", "PMC-grafen deklarerar sin tryckbarhet");
+has(els.app.innerHTML, "Belastning/dag, grenfärg", "TSS-staplarna i grenfärg finns i legenden");
+
+clickBtn({ pmcday: "2026-10-15" });
+has(els.app.innerHTML, "ptdetail", "tryck på en dag fäller ut detaljraden");
+has(els.app.innerHTML, "Löp 55 TSS", "dagdetaljen visar belastning per gren");
+clickBtn({ pmcday: "2026-10-15" });
+ok(!els.app.innerHTML.includes("Löp 55 TSS"), "andra trycket fäller in detaljen");
+
+/* REGRESSION device_watts: spinningpasset får inte längre uteslutas */
+clickBtn({ effsport: "bike" });
+has(els.app.innerHTML, "(1 av minst 4)", "REGRESSION: device_watts-passet räknas nu in i fönstret");
+ok(!els.app.innerHTML.includes("utan wattmätare uteslutna"),
+   "REGRESSION: inga falska uteslutningar när mätaren finns");
+has(els.app.innerHTML, "3M", "effektiviteten har tidsintervallväljare");
+clickBtn({ effsport: "run" });
+ok(els.app.innerHTML.includes("minst 4"), "run: för få pass i stubben — meddelas ärligt i stället för tom graf");
+
+clickBtn({ nav: "installningar" });
+
 /* Cachen går att rensa — och då gäller v32 igen */
 clickBtn({ clearcache: "" });
 ok(!mem.has("trizone.next.cache.v1"), "datacachen går att rensa");
@@ -696,7 +722,7 @@ has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på 
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 245;
+const EXPECTED_MIN = 259;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

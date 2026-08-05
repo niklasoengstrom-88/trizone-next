@@ -1247,6 +1247,12 @@ import { ICU, validateConn, connReady, icuRequest, proxyAllowed, icuError,
   ok(!("kudos_count" in p.activities[0]) && !("description" in p.activities[0]),
      "projectActivities: okända fält når aldrig lagringen");
   eq(p.activities[0].icu_rpe, 7, "projectActivities: icu_rpe följer med — fältet v32 inte bar");
+  /* REGRESSION 2026-08-05 del 2: vitlistan strippade device_watts, så wattfixen i
+     effTrend var verkningslös mot cachad data — fältet nådde aldrig fram. */
+  { const pw = projectActivities([{ id: 77, type: "Ride", start_date_local: "2026-08-01T18:00:00",
+      moving_time: 3600, average_watts: 180, device_watts: true }]);
+    eq(pw.activities[0].device_watts, true,
+       "REGRESSION: device_watts överlever projektionen — annars är wattfixen verkningslös"); }
   eq(p.activities[0].feel, 4, "projectActivities: feel följer med");
   eq(p.activities[1].start_date_local, "2026-08-04T06:00:00",
      "projectActivities: start_date faller tillbaka till start_date_local");
@@ -1720,10 +1726,59 @@ const swimSet = (n, secStart, step, meters = 1500) => Array.from({ length: n }, 
   eq(effTrend(runSet(3, 350, -4), ATH2, "run", 2).has, false,
      `effektivitet: färre än ${EFF.minPoints} pass ger ingen trendlinje (ingen falsk precision)`); }
 
+/* ================================================================
+   0.13.0 — wattfältbuggen, tidsfönster, sömn 3 nätter, dagliga laster
+   ================================================================ */
+import { dailyLoads, dayShift } from "./core.js";
+
+/* ---------- REGRESSION (fältverifierad 2026-08-05): device_watts ---------- */
+{ /* 34 spinningpass försvann: API:et skriver device_watts, koden läste bara
+     specens begreppsnamn has_device_watts. Fixturen låser båda vägarna. */
+  const dw = Array.from({ length: 8 }, (_, i) => ({
+    id: 400 + i, type: "Ride", start_date_local: `2026-07-${String(i + 1).padStart(2, "0")}T18:00:00`,
+    moving_time: 3600, distance: 30000, average_heartrate: 125,
+    average_watts: 170 + i * 3, device_watts: true }));
+  const t = effTrend(dw, ATH2, "bike", 2);
+  ok(t.has, "REGRESSION device_watts: API:ets faktiska fältnamn accepteras");
+  eq(t.skipped.est, 0, "REGRESSION device_watts: inget mätarpass utesluts längre");
+  ok(t.better, "REGRESSION device_watts: trenden räknas på riktiga watt");
+  const none = dw.map(a => { const { device_watts, ...rest } = a; return rest; });
+  eq(effTrend(none, ATH2, "bike", 2).skipped.est, 8,
+     "device_watts: utan någon av flaggorna utesluts passet fortsatt — estimat är inte mätvärden"); }
+
+/* ---------- effTrend: tidsfönster ---------- */
+{ const t = effTrend(runSet(10, 350, -4), ATH2, "run", 2, { from: "2026-07-01" });
+  ok(t.has && t.n === 5, "tidsfönster: bara pass efter from-datumet räknas");
+  eq(t.skipped.window, 5, "tidsfönster: bortfiltrerade pass redovisas");
+  eq(effTrend(runSet(10, 350, -4), ATH2, "run", 2, { from: "2026-08-01" }).has, false,
+     "tidsfönster: för smalt fönster ger ingen trend, aldrig en gissning"); }
+
+/* ---------- Sömn 3 nätter (v32:s inforuta) ---------- */
+{ const w = wSeries(35, i => ({ restingHR: 48, sleepSecs: (i >= 32 ? [6, 7, 8][i - 32] : 7) * 3600 }));
+  const r = recovery(w, "2026-08-04");
+  eq(r.day.sleep3, 7, "sömn 3 nätter: medel av de tre senaste nätterna");
+  eq(recovery(wSeries(35, () => ({ restingHR: 48 })), "2026-08-04").day.sleep3, undefined,
+     "sömn 3 nätter: utan sömndata inget påhittat värde"); }
+
+/* ---------- dailyLoads ---------- */
+{ const acts = [
+    { id: 1, type: "Run",  start_date_local: "2026-10-14T18:00:00", moving_time: 3000, icu_training_load: 55 },
+    { id: 2, type: "Swim", start_date_local: "2026-10-14T06:30:00", moving_time: 1800, icu_training_load: 25 },
+    { id: 3, type: "Ride", start_date_local: "2026-10-12T18:00:00", moving_time: 3600, icu_training_load: 60 },
+    { id: 4, type: "Run",  start_date_local: "2026-01-01T18:00:00", moving_time: 3000, icu_training_load: 99 }];
+  const L = dailyLoads(acts, "2026-10-15", 7);
+  eq(L.length, 8, "dailyLoads: en rad per dag i fönstret, inklusive tomma");
+  const d14 = L.find(l => l.date === "2026-10-14");
+  eq([d14.run, d14.swim, d14.total], [55, 25, 80], "dailyLoads: två pass samma dag summeras per gren");
+  eq(L.find(l => l.date === "2026-10-13").total, 0, "dailyLoads: vilodag är noll, inte hål");
+  ok(!L.some(l => l.total === 99), "dailyLoads: pass utanför fönstret räknas aldrig");
+  eq(dailyLoads(acts, "trasigt", 7).length, 0, "dailyLoads: ogiltigt datum ger inget påstående");
+  eq(dayShift("2026-10-15", -7), "2026-10-08", "dayShift: exporterad och korrekt"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 610;
+const EXPECTED_MIN = 634;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
