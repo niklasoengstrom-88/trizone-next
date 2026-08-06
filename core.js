@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.15.0 · 2026-08-06";
+export const BUILD = "next-0.16.0 · 2026-08-06";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -93,6 +93,10 @@ export function validatePlan(plan) {
     else if (blockIds.has(b.id)) E(p, `dubblerat block-id: ${b.id}`); else blockIds.add(b.id);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(b.start ?? "")) E(p, `ogiltigt startdatum: ${b.start}`);
     if (!(b.weeks > 0)) E(p, `ogiltigt veckoantal: ${b.weeks}`);
+    /* Fasens polariseringsmål (beslut A, §3 v0.4): andel 0.5–0.95, valfritt —
+       frånvaro betyder att profilens värde gäller. Speglar ENGINE_FIELDS 50–95 %. */
+    if (b.lowShare != null && !(typeof b.lowShare === "number" && b.lowShare >= 0.5 && b.lowShare <= 0.95))
+      E(p, `ogiltigt fasmål lowShare: ${JSON.stringify(b.lowShare)} (väntat andel 0.5–0.95, eller uteslutet)`);
   });
 
   const weeks = plan.weeks ?? [];
@@ -254,6 +258,30 @@ export const ENGINE = {
 };
 
 export const DAYNAMES = ["mån", "tis", "ons", "tors", "fre", "lör", "sön"];
+
+/* ---------- Fasens polariseringsmål (beslut A, planformat §3 v0.4) ----------
+   blocks[].lowShare bär fasens 80/20-mål; profilen är fallback, ENGINE sist.
+   Hierarkin är avsiktlig: fasvärdet är coachens leverans per block — oenighet
+   är en planrevision, inte en inställning. Rena funktioner, en sanning. */
+export function blockForWeek(plan, weekNo) {
+  const w = (plan?.weeks ?? []).find(x => x.week === weekNo);
+  if (!w) return null;
+  return (plan.blocks ?? []).find(b => b.id === w.block) ?? null;
+}
+export function blockForDate(plan, iso) {
+  for (const b of plan?.blocks ?? []) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(b.start ?? "") || !(b.weeks > 0)) continue;
+    if (iso >= b.start && iso < dayShift(b.start, b.weeks * 7)) return b;
+  }
+  return null;
+}
+export function phaseLowShare(plan, ref = {}, cfg = {}) {
+  const block = ref.week != null ? blockForWeek(plan, ref.week)
+              : ref.date != null ? blockForDate(plan, ref.date) : null;
+  if (block?.lowShare != null)
+    return { target: block.lowShare, source: "block", label: block.label ?? block.id };
+  return { target: cfg.lowShareTarget ?? ENGINE.lowShareTarget, source: "profil", label: null };
+}
 
 /* Restriktivitetsordning för D4 (mest restriktiv vinner vid lika nivå) */
 export const ACTION_RANK = { strike: 5, substitute: 4, downgrade: 3, shorten: 2, move: 1, warn: 0 };
@@ -553,8 +581,19 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   }
   /* utfallsflaggor passerar som warn (beräknade uppströms) */
   for (const f of flags) {
-    if (f.id === "polarization") lvl3.push({ rule: "polarization", level: 3, session: f.sessionId ?? null,
-      action: "warn", why: `Veckan under ${Math.round(cfg.lowShareTarget * 100)} % lågintensivt — överväg att sänka ett pass.`, payload: {}, orig: {}, t: now, week: f.week });
+    if (f.id === "polarization") {
+      /* Beslut A: test-/race-veckor bedöms aldrig mot 80/20 — de ÄR planerat
+         hårda. Tystnad kräver explicit veckotyp; saknad vecka tystar aldrig. */
+      const wt = (plan?.weeks ?? []).find(w => w.week === f.week)?.type;
+      if (wt !== "test" && wt !== "race") {
+        const ph = phaseLowShare(plan, { week: f.week }, cfg);
+        lvl3.push({ rule: "polarization", level: 3, session: f.sessionId ?? null, action: "warn",
+          why: `Veckan under ${Math.round(ph.target * 100)} % lågintensivt`
+             + (ph.source === "block" ? ` (fasens mål, ${ph.label})` : "")
+             + ` — överväg att sänka ett pass.`,
+          payload: {}, orig: {}, t: now, week: f.week });
+      }
+    }
     if (f.id === "rpe-watch") lvl3.push({ rule: "rpe-watch", level: 3, session: f.sessionId ?? null,
       action: "warn", why: "RPE ≥ 9 loggat — nästa kvalitetspass granskas mot återhämtning.", payload: {}, orig: {}, t: now });
     /* recovery-watch (fas B): trendsignalen talar, ändrar aldrig. Dagssignalen
@@ -2053,8 +2092,9 @@ export function loadStatus(activities, todayISO, cfg = {}) {
 /* Intensitet ur UTFALL (matchning M-U: verkligheten räknas, även oplanerat).
    Sim utan giltig pulsdata hålls utanför och det redovisas — annars vore
    siffran en blandning av mätt och ogiltigt. */
-export function intensityStatus(activities, todayISO, cfg = {}, days = 28) {
-  const target = cfg.lowShareTarget ?? ENGINE.lowShareTarget ?? 0.78;
+export function intensityStatus(activities, todayISO, cfg = {}, days = 28, plan = null) {
+  const ph = phaseLowShare(plan, { date: todayISO }, cfg);
+  const target = ph.target;
   const from = dayShift(todayISO, -days);
   const swimOK = !!cfg.swimHrValid;
   let z = [0, 0, 0, 0, 0], skippedSwim = 0, used = 0;
@@ -2076,7 +2116,8 @@ export function intensityStatus(activities, todayISO, cfg = {}, days = 28) {
   return { key: "intensity", label: "Intensitet", state: share >= target ? "ok" : "warn",
            value: `${low} % lågintensivt`, zones: z, share, target, window: days, used,
            why: `${low} % av ${Math.round(total)} zonminuter de senaste ${days} dagarna låg i Z1–Z2. `
-              + `Mål ${Math.round(target * 100)} %.`
+              + (ph.source === "block" ? `Fasens mål ${Math.round(target * 100)} % (${ph.label}).`
+                                       : `Mål ${Math.round(target * 100)} % (profil).`)
               + (skippedSwim ? ` ${skippedSwim} simpass utanför — optisk puls i vatten är inte mätdata.` : ""),
            has: true };
 }
@@ -2111,9 +2152,9 @@ export function injuryStatus() {
               + "Tills dess görs ingen bedömning — och då visas ingen.", has: false };
 }
 
-export function statusGrid(activities, recov, todayISO, cfg = {}) {
+export function statusGrid(activities, recov, todayISO, cfg = {}, plan = null) {
   return [loadStatus(activities, todayISO, cfg),
-          intensityStatus(activities, todayISO, cfg),
+          intensityStatus(activities, todayISO, cfg, 28, plan),
           formStatus(recov),
           injuryStatus()];
 }

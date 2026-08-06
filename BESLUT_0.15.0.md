@@ -19,6 +19,11 @@
 
 Specarna styr **arkitektur och kontrakt** (datamodell, regelverk, lagring, matchning). **Demo v13 styr uttryck och interaktion** (ytor, grafer, fönster, flöden) — den är referensimplementationen, som INVENTERING-dokumentet redan slog fast för Idag-vyn. Konflikt avgörs så: uttryck → demon vinner, om inte spec 3 uttryckligen låst punkten (t.ex. T2 wordmark). Arbetsregel: **allt UI-arbete börjar med att läsa demons motsvarande yta.** Demon ligger i projektkunskapen.
 
-## Kvar
+## Kvar (detaljer i OVERLAMNING_till_0.16.md)
 
-`blocks[].lowShare` · `recovery-watch`-stämpeln · sim-LTHR · brick som pass-par i nästa planleverans · fördjupningsvyer.
+1. `blocks[].lowShare` — beslutad A, obyggd; föreslaget första ärende i nästa tråd
+2. `recovery-watch` mot §6-taket — ostämplat
+3. Sim-LTHR i intervals.icu före `swimHrValid` slås på
+4. Brick som pass-par — åtgärd i nästa planleverans, ingen kod
+5. Fördjupningsvyer per statusgrid-dimension — byggs från demon (G1)
+6. Fas 4: regelmotorn i UI — byggs från demons cockpit (G1)

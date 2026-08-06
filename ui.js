@@ -16,7 +16,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.15.0 · 2026-08-06";
+export const UI_BUILD = "next-0.16.0 · 2026-08-06";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -487,7 +487,11 @@ function renderAnalys(h) {
     <p class="lede">Tryck på en dimension för varför. Varje siffra går att härleda —
       inget här är skattat.</p></header>`);
 
-  const grid = statusGrid(S.acts ?? [], S.recov, today(), S.cfg);
+  /* Regressionsvakt 0.16.0: core-funktionerna läser cfg PLATT (lowShareTarget,
+     volumeCapPct) men S.cfg bär dem under engine — utan utplattningen jämförde
+     Analys alltid mot 78/110 % oavsett profil. swimHrValid är toppnivå. */
+  const ecfg = { ...(S.cfg.engine ?? {}), swimHrValid: S.cfg.swimHrValid };
+  const grid = statusGrid(S.acts ?? [], S.recov, today(), ecfg, S.plan);
   h.push(`<section class="dimgrid">`);
   for (const d of grid) {
     const open = S.dimOpen === d.key;

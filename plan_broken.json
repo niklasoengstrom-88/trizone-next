@@ -4,27 +4,103 @@
   "generated": "2026-07-31",
   "athlete": "niklas",
   "blocks": [
-    { "id": "skelett", "label": "Skelettblock", "start": "2026-10-12", "weeks": 3 }
+    {
+      "id": "skelett",
+      "label": "Skelettblock",
+      "start": "2026-10-12",
+      "weeks": 3,
+      "lowShare": 1.4
+    }
   ],
   "weeks": [
-    { "week": 42, "iso": "2026-W42", "block": "skelett", "type": "normal", "focus": "Trasig referens" }
+    {
+      "week": 42,
+      "iso": "2026-W42",
+      "block": "skelett",
+      "type": "normal",
+      "focus": "Trasig referens"
+    }
   ],
   "sessions": [
-    { "id": "br-sum", "week": 42, "day": 3, "slot": "Kväll",
-      "sport": "run", "prio": "A", "durationMin": 50,
-      "profile": [[1,10],[4,24]] },
-    { "id": "br-sport", "week": 42, "day": 1, "slot": "Lunch",
-      "sport": "löpning", "prio": "B", "durationMin": 30,
-      "profile": [[1,30]] },
-    { "id": "br-week", "week": 99, "day": 5, "slot": "Morgon",
-      "sport": "bike", "prio": "C", "durationMin": 60,
-      "profile": [[2,60]] },
-    { "id": "br-dup", "week": 42, "day": 2, "slot": "Kväll",
-      "sport": "strength", "prio": "B", "durationMin": 40,
-      "profile": [[1,40]] },
-    { "id": "br-dup", "week": 42, "day": 6, "slot": "Kväll",
-      "sport": "swim", "prio": "C", "durationMin": 30,
-      "profile": [[1,30]] }
+    {
+      "id": "br-sum",
+      "week": 42,
+      "day": 3,
+      "slot": "Kväll",
+      "sport": "run",
+      "prio": "A",
+      "durationMin": 50,
+      "profile": [
+        [
+          1,
+          10
+        ],
+        [
+          4,
+          24
+        ]
+      ]
+    },
+    {
+      "id": "br-sport",
+      "week": 42,
+      "day": 1,
+      "slot": "Lunch",
+      "sport": "löpning",
+      "prio": "B",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          30
+        ]
+      ]
+    },
+    {
+      "id": "br-week",
+      "week": 99,
+      "day": 5,
+      "slot": "Morgon",
+      "sport": "bike",
+      "prio": "C",
+      "durationMin": 60,
+      "profile": [
+        [
+          2,
+          60
+        ]
+      ]
+    },
+    {
+      "id": "br-dup",
+      "week": 42,
+      "day": 2,
+      "slot": "Kväll",
+      "sport": "strength",
+      "prio": "B",
+      "durationMin": 40,
+      "profile": [
+        [
+          1,
+          40
+        ]
+      ]
+    },
+    {
+      "id": "br-dup",
+      "week": 42,
+      "day": 6,
+      "slot": "Kväll",
+      "sport": "swim",
+      "prio": "C",
+      "durationMin": 30,
+      "profile": [
+        [
+          1,
+          30
+        ]
+      ]
+    }
   ],
   "changelog": []
 }

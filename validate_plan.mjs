@@ -14,7 +14,9 @@ catch (e) { console.error(`✗ ${file}: ogiltig JSON — ${e.message}`); process
 
 const { ok, errors } = validatePlan(plan);
 if (ok) {
-  console.log(`✓ ${file} giltig · planVersion ${plan.planVersion} · ${plan.sessions.length} pass, ${plan.weeks.length} veckor, ${plan.blocks.length} block · core ${BUILD}`);
+  const phase = plan.blocks.map(b =>
+    `${b.id} ${b.lowShare != null ? Math.round(b.lowShare * 100) + " %" : "profil"}`).join(", ");
+  console.log(`✓ ${file} giltig · planVersion ${plan.planVersion} · ${plan.sessions.length} pass, ${plan.weeks.length} veckor, ${plan.blocks.length} block · fasmål: ${phase} · core ${BUILD}`);
   process.exit(0);
 }
 console.error(`✗ ${file}: ${errors.length} fel — inget når rendering ovaliderat:\n`);

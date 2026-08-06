@@ -20,7 +20,7 @@
   "generated": "2026-08-31",
   "athlete": "niklas",
   "anchor": { "raceId": "jonkoping-703-2027" },
-  "blocks":  [ { "id": "bas", "label": "Bas", "start": "2026-09-07", "weeks": 14 } ],
+  "blocks":  [ { "id": "bas", "label": "Bas", "start": "2026-09-07", "weeks": 14, "lowShare": 0.80 } ],
   "weeks":   [ { "week": 37, "iso": "2026-W37", "block": "bas", "type": "normal",
                  "focus": "…" } ],
   "sessions": [ … se nedan … ],
@@ -30,6 +30,7 @@
 
 - `weeks.type`: `normal | recovery | test | race`. Återhämtningsvecka är plan, inte hål — leverera den.
 - Blockstart är måndagsdatum; `weeks.iso` måste stämma med kalenderveckan.
+- **`blocks[].lowShare` (v0.4, beslut P7):** fasens 80/20-mål som andel 0.5–0.95 (t.ex. Bas `0.80`, Build `0.75`). Valfritt — frånvaro betyder att Niklas profilvärde gäller — men **leverera det per block när fasen har ett medvetet mål**: blockvärdet vinner över profilen och är coachens kanal för fasstyrning. `polarization` tiger automatiskt på `test`/`race`-veckor; leverera aldrig ett sänkt lowShare som ersättning för rätt veckotyp.
 
 ## Pass
 

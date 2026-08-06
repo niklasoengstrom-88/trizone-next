@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.15.0 · 2026-08-06
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.16.0 · 2026-08-06
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.15.0 · 2026-08-06" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.16.0 · 2026-08-06" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -83,7 +83,13 @@ const ICU_ACTIVITIES = [
   /* Matchar måndagens sk-w42-swim-css — bär zondata så att remsan KAN renderas
      när swimHrValid slås på, och tigas när den är av. */
   { id: 905, type: "Swim", name: "CSS-intervaller", start_date_local: "2026-10-13T18:10:00",
-    moving_time: 45 * 60, distance: 2200, icu_hr_zone_times: [600, 900, 600, 500, 100] }];
+    moving_time: 45 * 60, distance: 2200, icu_hr_zone_times: [600, 900, 600, 500, 100] },
+  /* Tyst löphistorik (inga zoner, ingen distans, ingen puls) — ger loadStatus
+     ett 3-veckorssnitt att jämföra mot utan att röra intensitet/effektivitet.
+     Ligger > ±1 dag från alla pass ⇒ aldrig matchkandidater. */
+  { id: 906, type: "Run", name: "Historiklöpning 1", start_date_local: "2026-09-24T18:00:00", moving_time: 30 * 60 },
+  { id: 907, type: "Run", name: "Historiklöpning 2", start_date_local: "2026-10-01T18:00:00", moving_time: 30 * 60 },
+  { id: 908, type: "Run", name: "Historiklöpning 3", start_date_local: "2026-10-08T18:00:00", moving_time: 30 * 60 }];
 const ICU_ATHLETE = { id: "i123456", name: "Niklas", icu_ftp: 262, sportSettings: [
   { types: ["Ride", "VirtualRide"], hr_zones: [120, 140, 155, 168, 185], lthr: 168, ftp: 262 },
   { types: ["Run"], hr_zones: [128, 148, 162, 173, 190], lthr: 173, threshold_pace: 2.967 },
@@ -325,7 +331,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.15.0 · 2026-08-06", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.16.0 · 2026-08-06", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -526,7 +532,7 @@ ok(icuCalls.length === 4, "Uppdatera nu gör exakt tre anrop (aktiviteter, welln
 ok(icuCalls.some(c => c.url.includes("/activities?oldest=")), "aktivitetsanropet bär historikfönstret");
 ok(mem.has("trizone.next.cache.v1"), "hämtningen skriver till EGEN cachenyckel");
 { const c = JSON.parse(mem.get("trizone.next.cache.v1"));
-  ok(c.activities.length === 5, "alla aktiviteter projiceras in");
+  ok(c.activities.length === 8, "alla aktiviteter projiceras in (5 + 3 historiklöpningar)");
   ok(!("kudos_count" in c.activities.find(a => a.id === 901)),
      "okända fält vitlistas bort på vägen in (F5)");
   ok(c.activities.find(a => a.id === 901).icu_rpe === 6, "icu_rpe följer med i egen projektion");
@@ -589,7 +595,7 @@ icuState.status = 401;
 clickBtn({ sync: "" });
 await new Promise(r => setTimeout(r, 30));
 has(els.app.innerHTML, "nyckeln avvisades", "401 förklaras som fel nyckel, inte 'något gick fel'");
-ok(JSON.parse(mem.get("trizone.next.cache.v1")).activities.length === 5,
+ok(JSON.parse(mem.get("trizone.next.cache.v1")).activities.length === 8,
    "misslyckad hämtning lämnar den gamla cachen orörd");
 icuState.status = 200;
 
@@ -630,6 +636,13 @@ has(els.app.innerHTML, "Pulsremsa på simpass: av", "reglaget går att slå av i
 ok(JSON.parse(mem.get("trizone.next.cfg.v1")).swimHrValid === false, "avslaget sparas också");
 
 /* ---------- ANALYS-vyn (0.11.0) ---------- */
+/* Regressionsvakt 0.16.0: motorvärden bor under cfg.engine men griden läser
+   platt — före fixen jämförde Analys alltid mot 78/110 % oavsett profil. */
+clickBtn({ nav: "installningar" });
+els['[data-eng="volumeCapPct"]'] = { value: "180" };
+clickBtn({ engsave: "" });
+ok(JSON.parse(mem.get("trizone.next.cfg.v1")).engine?.volumeCapPct === 180,
+   "volymtaket 180 % sparas under engine");
 clickBtn({ nav: "analys" });
 has(els.app.innerHTML, "Analys", "Analys finns som egen vy");
 has(els.app.innerHTML, "aldrig gissningar", "vyn deklarerar sin egen ambition");
@@ -653,6 +666,12 @@ clickBtn({ dim: "form" });
 ok(!els.app.innerHTML.includes("dimwhy"), "ett andra tryck fäller in igen");
 clickBtn({ dim: "intensity" });
 has(els.app.innerHTML, "28 dagar", "V28-REGELN: procentsiffran bär sitt tidsfönster");
+has(els.app.innerHTML, "Fasens mål 75 %", "blocks[].lowShare: fasens mål visas i Analys (beslut A)");
+has(els.app.innerHTML, "Skelettblock", "fasmålet bär sin källa — blocket namnges");
+clickBtn({ dim: "intensity" });
+clickBtn({ dim: "load" });
+has(els.app.innerHTML, "(180 %)", "REGRESSION 0.16.0: profilens volymtak når griden — cfg.engine plattas ut");
+clickBtn({ dim: "load" });
 
 /* Grafer: ett koordinatsystem per axel (v29-lärdomen) */
 has(els.app.innerHTML, "Belastning · 8 veckor", "belastningsgrafen finns");
@@ -723,7 +742,7 @@ has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på 
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 259;
+const EXPECTED_MIN = 263;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

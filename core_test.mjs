@@ -32,11 +32,46 @@ const plan = JSON.parse(readFileSync("plan_ref.json","utf8"));   /* testfixturen
 ok(validatePlan(plan).ok, "referensplanen validerar");
 const broken = JSON.parse(readFileSync("plan_broken.json","utf8"));
 const vb = validatePlan(broken);
-ok(!vb.ok && vb.errors.length === 4, "trasig plan: exakt 4 fel hittas");
+ok(!vb.ok && vb.errors.length === 5, "trasig plan: exakt 5 fel hittas");
 ok(vb.errors.some(e=>e.msg.includes("34 min ≠ duration 50")), "rotorsak: profilsumma mot duration");
+ok(vb.errors.some(e=>e.msg.includes("lowShare")), "rotorsak: orimligt fasmål (lowShare 1.4) pekas ut");
 ok(vb.errors.some(e=>e.msg.includes('okänd gren: "löpning"')), "rotorsak: okänd gren namnges");
 ok(vb.errors.some(e=>e.msg.includes("vecka 99")), "rotorsak: veckoreferens pekas ut");
 ok(vb.errors.some(e=>e.msg.includes("dubblerat pass-id")), "rotorsak: id-kollision pekas ut");
+
+/* ---------- blocks[].lowShare (beslut A, planformat §3 v0.4) ----------
+   Fasens polariseringsmål bor i blocket; profilen är fallback. */
+import { blockForWeek, blockForDate, phaseLowShare } from "./core.js";
+{ const mk = ls => ({ ...structuredClone(plan),
+    blocks: [{ id: "skelett", label: "Skelettblock", start: "2026-10-12", weeks: 3,
+               ...(ls !== undefined ? { lowShare: ls } : {}) }] });
+  ok(validatePlan(mk(0.75)).ok, "lowShare 0.75: giltigt fasmål");
+  ok(validatePlan(mk(undefined)).ok, "lowShare frånvarande: giltigt — profilen är fallback");
+  ok(!validatePlan(mk(1.4)).ok, "lowShare 1.4: avvisas — andel, inte procent");
+  ok(!validatePlan(mk(0.3)).ok, "lowShare 0.3: avvisas — under settingsgolvet 50 %");
+  ok(!validatePlan(mk("0.75")).ok, "lowShare som sträng: avvisas — typ, inte tolkning");
+  const err = validatePlan(mk(1.4)).errors[0];
+  ok(err.msg.includes("0.5") && err.msg.includes("0.95"), "felet säger gränserna, inte bara nej"); }
+
+{ ok(blockForWeek(plan, 42)?.id === "skelett", "blockForWeek: vecka → block via weeks[].block");
+  ok(blockForWeek(plan, 99) === null, "blockForWeek: okänd vecka ⇒ null, aldrig gissning");
+  ok(blockForDate(plan, "2026-10-15")?.id === "skelett", "blockForDate: datum i blockspannet");
+  ok(blockForDate(plan, "2026-10-11") === null, "blockForDate: dagen före blockstart ⇒ null");
+  ok(blockForDate(plan, "2026-11-02") === null, "blockForDate: dagen efter blockslut ⇒ null (start+3v)"); }
+
+{ /* Hierarkin: block > profil > ENGINE-default */
+  const ph = phaseLowShare(plan, { week: 42 }, { lowShareTarget: 0.70 });
+  eq([ph.target, ph.source], [0.75, "block"], "fasupplösning: blockets 0.75 vinner över profilens 0.70");
+  ok(ph.label === "Skelettblock", "fasupplösning: blockets etikett följer med");
+  const bare = structuredClone(plan); delete bare.blocks[0].lowShare;
+  eq(phaseLowShare(bare, { week: 42 }, { lowShareTarget: 0.70 }).target, 0.70,
+     "utan blockvärde: profilen är fallback");
+  eq(phaseLowShare(bare, { week: 42 }, {}).source, "profil",
+     "fallbackens källa redovisas som profil även vid ENGINE-default");
+  eq(phaseLowShare(bare, { week: 42 }, {}).target, 0.78, "utan båda: ENGINE-default 0.78");
+  eq(phaseLowShare(plan, { date: "2026-10-20" }, {}).target, 0.75,
+     "datumväg: samma svar som veckovägen — en sanning");
+  eq(phaseLowShare(null, { week: 42 }, {}).target, 0.78, "utan plan: default, aldrig krasch"); }
 
 /* ---------- Poängmodellen ---------- */
 const cfg = { dateOfSession: s => s.date };
@@ -971,18 +1006,47 @@ import { ENGINE_FIELDS, athleteGuard, activateMode, LIFE_MODES } from "./core.js
   ok(!st.saveCfg({ engine: { comebackCount: 99 } }).ok, "värde utanför gräns avvisas");
   ok(ENGINE_FIELDS.lowShareTarget.min === 50, "gränserna är deklarerade, inte gömda"); }
 
-/* ---------- Meddelandet ljuger aldrig om sin egen tröskel (0.9.0-defekten) ---------- */
+/* ---------- Meddelandet ljuger aldrig om sin egen tröskel (0.9.0-defekten)
+   + blocks[].lowShare (beslut A): block > profil, tiger på test/race ---------- */
 { const flags = [{ id: "polarization", week: 42 }, { id: "duration-drift", week: 42 }];
   const std = applyRules(plan, {}, {}, flags, NOW);
-  ok(std.actions.some(a => a.rule === "polarization" && a.why.includes("78 %")),
-     "default: texten säger 78 %");
+  ok(std.actions.some(a => a.rule === "polarization" && a.why.includes("75 %")),
+     "blockets fasmål 0.75 ⇒ texten säger 75 %");
+  ok(std.actions.some(a => a.rule === "polarization" && a.why.includes("Skelettblock")),
+     "texten namnger fasen som målet kommer ur");
   const mine = applyRules(plan, {}, { engine: { lowShareTarget: 0.70, driftPct: 140 } }, flags, NOW);
-  ok(mine.actions.some(a => a.rule === "polarization" && a.why.includes("70 %")),
-     "egen tröskel ⇒ texten säger 70 % — inte längre inbakad siffra");
+  ok(mine.actions.some(a => a.rule === "polarization" && a.why.includes("75 %")),
+     "block vinner över profil: 70 % i profilen ändrar inte fasens 75 %");
   ok(mine.actions.some(a => a.why.includes("140 %")),
-     "samma sak för duration-drift — texten följer profilen");
+     "duration-drift följer fortsatt profilen — driftPct har inget fasvärde");
   ok(mine.actions.filter(a => a.level === 3 && a.why.includes("%")).length === 1,
-     "flaggmerge (§10): polarization × duration-drift blir EN post, båda siffrorna med"); }
+     "flaggmerge (§10): polarization × duration-drift blir EN post, båda siffrorna med");
+
+  /* profil-fallback när blocket saknar värde */
+  const bare = structuredClone(plan); delete bare.blocks[0].lowShare;
+  const fb = applyRules(bare, {}, { engine: { lowShareTarget: 0.70 } },
+    [{ id: "polarization", week: 42 }], NOW);
+  ok(fb.actions.some(a => a.rule === "polarization" && a.why.includes("70 %")),
+     "utan blockvärde: profilens tröskel talar (0.9.0-regeln lever)");
+  ok(!fb.actions.some(a => a.rule === "polarization" && a.why.includes("Skelettblock")),
+     "profilkälla ⇒ ingen fasetikett — texten ljuger inte om varifrån målet kom");
+
+  /* tystnad på test- och race-veckor (beslut A): veckan ÄR planerat hård */
+  const race = structuredClone(plan);
+  race.weeks.find(w => w.week === 42).type = "race";
+  const rq = applyRules(race, {}, {}, flags, NOW);
+  ok(!rq.actions.some(a => a.rule === "polarization"),
+     "race-vecka: polarization tiger — en tävlingsvecka bedöms inte mot 80/20");
+  ok(rq.actions.some(a => a.rule === "duration-drift"),
+     "endast polarization tiger — duration-drift lever på race-veckan (beslutets omfång)");
+  const tv = applyRules(plan, {}, {},
+    [{ id: "polarization", week: 44 }], NOW);   /* v.44 är test i plan_ref */
+  ok(!tv.actions.some(a => a.rule === "polarization"),
+     "test-vecka: polarization tiger — testveckan är avsiktligt ovanligt hård");
+  const missing = applyRules(plan, {}, {},
+    [{ id: "polarization", week: 99 }], NOW);
+  ok(missing.actions.some(a => a.rule === "polarization"),
+     "vecka utanför planen: flaggan lever på profilmålet — tystnad kräver explicit test/race, aldrig saknad data"); }
 { const q = applyRules(plan, {}, { engine: { volumeCapPct: 130 } },
     [{ id: "volume-cap", sessionId: "sk-w42-run-thr", source: "derived" }], NOW);
   ok(q.questions.some(x => x.ask.includes("130 %")), "frågan citerar profilens tak, inte kodens"); }
@@ -1542,7 +1606,20 @@ const ACT = (id, type, date, min, zt) => ({ id, type, name: "x",
   eq(r.value, "92 % lågintensivt", "intensitet: Z1+Z2 mot totalen");
   eq(r.state, "ok", "intensitet: över målet är ok");
   eq(intensityStatus(acts, "2026-10-15", { lowShareTarget: 0.95 }).state, "warn",
-     "intensitet: målet är profildata"); }
+     "intensitet: målet är profildata");
+
+  /* blocks[].lowShare i Analys (beslut A): fasens mål visas med sin källa */
+  const phPlan = { blocks: [{ id: "bas", label: "Bas", start: "2026-10-12", weeks: 3, lowShare: 0.95 }],
+                   weeks: [{ week: 42, block: "bas", type: "normal" }], sessions: [] };
+  const ph = intensityStatus(acts, "2026-10-15", { lowShareTarget: 0.78 }, 28, phPlan);
+  eq(ph.state, "warn", "fasmål 95 %: blocket vinner över profilens 78 % även i Analys");
+  ok(ph.why.includes("Fasens mål 95 %") && ph.why.includes("Bas"),
+     "Analys: 'Fasens mål: X % (fas)' — målet bär sin källa");
+  const noPh = intensityStatus(acts, "2026-10-15", { lowShareTarget: 0.78 }, 28,
+    { blocks: [{ id: "bas", start: "2026-10-12", weeks: 3 }], weeks: [], sessions: [] });
+  ok(noPh.why.includes("Mål 78 % (profil)"), "utan blockvärde: målet märks som profilens");
+  eq(intensityStatus(acts, "2026-10-15", { lowShareTarget: 0.78 }, 28, null).why.includes("(profil)"), true,
+     "utan plan alls: samma ärliga märkning, ingen krasch"); }
 
 { /* Simmens ogiltiga puls får aldrig blandas in i en mätt siffra */
   const acts = [ACT(1, "Run", "2026-10-14", 60, [1800, 1200, 300, 300, 0]),
@@ -1603,7 +1680,13 @@ eq(formStatus({ has: false }).has, false, "dagsform: tomt läge markeras");
      "statusgrid: ordningen är fast — belastning, intensitet, dagsform, skaderisk");
   eq(g.filter(d => d.has).length, 3, "statusgrid: tre av fyra bär bedömning i 0.11.0");
   ok(g.every(d => d.label && d.value && d.why),
-     "statusgrid: varje kort har etikett, värde OCH varför — aldrig en siffra utan förklaring"); }
+     "statusgrid: varje kort har etikett, värde OCH varför — aldrig en siffra utan förklaring");
+  const gp = statusGrid([ACT(1, "Run", "2026-10-14", 60, [1800, 1200, 300, 300, 0])],
+                        { has: false }, "2026-10-15", {},
+                        { blocks: [{ id: "bas", label: "Bas", start: "2026-10-12", weeks: 3, lowShare: 0.95 }],
+                          weeks: [], sessions: [] });
+  ok(gp.find(d => d.key === "intensity").why.includes("Fasens mål 95 %"),
+     "statusgrid: planen når intensitetsdimensionen — fasmålet syns i griden"); }
 
 /* ================================================================
    PMC + EFFEKTIVITET (0.12.0)
@@ -1778,7 +1861,7 @@ import { dailyLoads, dayShift } from "./core.js";
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 634;
+const EXPECTED_MIN = 665;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
