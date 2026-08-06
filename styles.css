@@ -1,4 +1,4 @@
-/* TRIZONE Next — styles.css · BUILD next-0.14.0 · 2026-08-06
+/* TRIZONE Next — styles.css · BUILD next-0.15.0 · 2026-08-06
    Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
 :root{
   --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
@@ -413,3 +413,9 @@ main{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
 @keyframes chartin{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion: reduce){.chartwrap{animation:none}}
 .ptdetail{animation:chartin .2s ease-out both}
+
+/* ---------- 0.15.0: pixeltrogen grafgeometri ----------
+   viewBox i px-enheter, aspekt bevaras — cirklar är cirklar (demons modell).
+   Höjden följer bredden proportionellt; ytan fyller mobilskärmen. */
+.chart{width:100%;height:auto;display:block}
+.ylab.tall3{justify-content:space-between}

@@ -16,7 +16,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
 
-export const UI_BUILD = "next-0.14.0 · 2026-08-06";
+export const UI_BUILD = "next-0.15.0 · 2026-08-06";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -524,9 +524,13 @@ function renderAnalys(h) {
       när de kan ritas ur mätdata — aldrig ur skattningar.</p></section>`);
 }
 
-/* ---------- PMC: fitness, trötthet, form (0.13.0: intervall, staplar, tryckbar) ---------- */
+/* ---------- PMC: fitness, trötthet, form ----------
+   0.15.0-geometrin: ETT koordinatsystem (dagcellens mittpunkt) för linjer,
+   staplar, guide och tryckytor — v29-lagen, nu även här. Pixeltrogen viewBox
+   (demons modell) så att cirklar är cirklar, inte ellipser. */
 const PMC_RANGES = [[30, "1M"], [90, "3M"], [180, "6M"], [370, "Säsong"]];
 const LOADCOLORS = [["swim", "Sim"], ["bike", "Cykel"], ["run", "Löp"], ["strength", "Styrka"]];
+const CW = 356;                                  /* ritytans bredd i enheter ≈ px på mobil */
 
 function pmcSection(h) {
   const range = S.pmcRange;
@@ -535,7 +539,6 @@ function pmcSection(h) {
     <div class="chips">${PMC_RANGES.map(([d, l]) =>
       `<button class="chip${range === d ? " on" : ""}" data-pmcrange="${d}">${l}</button>`).join("")}</div>`);
 
-  /* v32:s inforuta — ger mer än en vilopulskurva (produktägarbeslut 0.13.0) */
   const rc = S.recov;
   if (rc?.has) {
     const d = rc.day, tr = rc.trend;
@@ -551,51 +554,55 @@ function pmcSection(h) {
 
   const loads = dailyLoads(S.acts ?? [], today(), range);
   const n = Math.max(loads.length, 1), ix = Object.fromEntries(loads.map((l, i) => [l.date, i]));
+  const H = 200, bw = (CW - 4) / n;
+  const xc = i => (2 + (i + 0.5) * bw);          /* dagcellens mitt — ENDA x-systemet */
   const vals = p.series.flatMap(d => [d.ctl, d.atl]);
   const lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 1);
-  const yLine = v => (62 - (v - lo) / span * 56 - 2).toFixed(1);  /* linjer i bandet 6–62, stödlinjer på 6/34/62 */
-  const line = key => p.series.map(d =>
-    `${((ix[d.date] ?? 0) / Math.max(n - 1, 1) * 100).toFixed(2)},${yLine(d[key])}`).join(" ");
+  const yLine = v => (122 - (v - lo) / span * 108).toFixed(1);   /* linjer i bandet 14–122 */
+  const linePts = key => p.series.map(d => `${xc(ix[d.date] ?? 0).toFixed(2)},${yLine(d[key])}`).join(" ");
+  const ctlPts = linePts("ctl"), atlPts = linePts("atl");
+  const area = `M ${ctlPts.split(" ")[0]} L ${ctlPts.split(" ").slice(1).join(" L ")} L ${xc(n - 1).toFixed(2)},${H} L ${xc(0).toFixed(2)},${H} Z`;
   const maxL = Math.max(...loads.map(l => l.total), 1);
-  const bw = 100 / n;
   let bars = "";
-  for (let i = 0; i < loads.length; i++) {
+  for (let i = 0; i < loads.length; i++) {       /* staplar upp i kurvornas rum — integrerade som v32 */
     const l = loads[i]; if (!l.total) continue;
-    let y = 100;
+    let y = H - 4;
+    const w = Math.max(bw * 0.68, 0.8), x = (xc(i) - w / 2).toFixed(2);
     for (const [sp] of LOADCOLORS) { if (!l[sp]) continue;
-      const hgt = l[sp] / maxL * 32; y -= hgt;
-      bars += `<rect x="${(i * bw).toFixed(2)}" y="${y.toFixed(1)}" width="${Math.max(bw * 0.72, 0.18).toFixed(2)}" height="${hgt.toFixed(1)}" fill="var(--${sp})" opacity=".85"/>`; }
+      const hgt = l[sp] / maxL * 82; y -= hgt;
+      bars += `<rect x="${x}" y="${y.toFixed(1)}" width="${w.toFixed(2)}" height="${hgt.toFixed(1)}" fill="var(--${sp})" opacity=".88"/>`; }
   }
   const taps = loads.map((l, i) =>
-    `<rect x="${(i * bw).toFixed(2)}" y="0" width="${bw.toFixed(2)}" height="100" fill="transparent" data-pmcday="${l.date}"/>`).join("");
-  const sx = S.pmcSel != null && ix[S.pmcSel] != null ? (ix[S.pmcSel] / Math.max(n - 1, 1) * 100).toFixed(2) : null;
+    `<rect x="${(xc(i) - bw / 2).toFixed(2)}" y="0" width="${bw.toFixed(2)}" height="${H}" fill="transparent" data-pmcday="${l.date}"/>`).join("");
+  const si = S.pmcSel != null ? ix[S.pmcSel] : null;
+  const sd = si != null ? p.series.find(x => x.date === S.pmcSel) : null;
+  const marker = (pts, color) => sd == null ? "" :
+    `<circle cx="${xc(si).toFixed(2)}" cy="${pts}" r="4.6" fill="var(--bg)" stroke="${color}" stroke-width="2"/>`;
 
-  const ctlPts = line("ctl");
-  const area = `M ${ctlPts.split(" ")[0]} L ${ctlPts.split(" ").slice(1).join(" L ")} L 100,100 L 0,100 Z`;
-  h.push(`<div class="chartwrap"><div class="ylab"><span>${Math.round(hi)}</span><span>${Math.round((hi + lo) / 2)}</span><span>${Math.round(lo)}</span></div>
-    <svg class="spark xl" viewBox="0 0 100 100" preserveAspectRatio="none">
+  h.push(`<div class="chartwrap"><div class="ylab tall3"><span>${Math.round(hi)}</span><span>${Math.round((hi + lo) / 2)}</span><span>${Math.round(lo)}</span></div>
+    <svg class="chart" viewBox="0 0 ${CW} ${H}">
       <defs><linearGradient id="ctlfill" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#5B93E6" stop-opacity=".16"/>
+        <stop offset="0" stop-color="#5B93E6" stop-opacity=".15"/>
         <stop offset="1" stop-color="#5B93E6" stop-opacity="0"/></linearGradient></defs>
-      <line x1="0" y1="6" x2="100" y2="6" stroke="var(--line-soft)" stroke-width=".4"/>
-      <line x1="0" y1="34" x2="100" y2="34" stroke="var(--line-soft)" stroke-width=".4"/>
-      <line x1="0" y1="62" x2="100" y2="62" stroke="var(--line-soft)" stroke-width=".4"/>
-      ${bars}
+      <line x1="2" y1="14" x2="${CW - 2}" y2="14" stroke="var(--line-soft)" stroke-width=".7"/>
+      <line x1="2" y1="68" x2="${CW - 2}" y2="68" stroke="var(--line-soft)" stroke-width=".7"/>
+      <line x1="2" y1="122" x2="${CW - 2}" y2="122" stroke="var(--line-soft)" stroke-width=".7"/>
       <path d="${area}" fill="url(#ctlfill)"/>
-      ${sx != null ? `<line x1="${sx}" y1="0" x2="${sx}" y2="100" stroke="var(--accent)" stroke-width=".6" stroke-dasharray="2 2" opacity=".7"/>` : ""}
-      <polyline points="${line("atl")}" fill="none" stroke="var(--warn)" stroke-width="1.3"
-        stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" opacity=".92"/>
-      <polyline points="${ctlPts}" fill="none" stroke="var(--info)" stroke-width="1.8"
-        stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+      ${bars}
+      ${si != null ? `<line x1="${xc(si).toFixed(2)}" y1="6" x2="${xc(si).toFixed(2)}" y2="${H - 4}" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3" opacity=".75"/>` : ""}
+      <polyline points="${atlPts}" fill="none" stroke="var(--warn)" stroke-width="1.9"
+        stroke-linejoin="round" stroke-linecap="round" opacity=".92"/>
+      <polyline points="${ctlPts}" fill="none" stroke="var(--info)" stroke-width="2.4"
+        stroke-linejoin="round" stroke-linecap="round"/>
+      ${sd ? marker(yLine(sd.atl), "var(--warn)") + marker(yLine(sd.ctl), "var(--info)") : ""}
       ${taps}</svg></div>
     <div class="xlab"><span>${esc(loads[0]?.date ?? "")}</span><span>Tryck i grafen för en dag</span><span>${esc(loads[loads.length - 1]?.date ?? "")}</span></div>
     <div class="legend"><span><i class="sw" style="background:var(--info)"></i>Fitness (CTL)</span>
       <span><i class="sw" style="background:var(--warn)"></i>Trötthet (ATL)</span>
       <span><i class="sw" style="background:var(--run)"></i>Belastning/dag, grenfärg</span></div>`);
 
-  if (S.pmcSel != null && ix[S.pmcSel] != null) {
-    const sd = p.series.find(x => x.date === S.pmcSel), ld = loads[ix[S.pmcSel]];
-    const parts = [];
+  if (si != null) {
+    const ld = loads[si], parts = [];
     if (sd) parts.push(`Form ${sd.tsb > 0 ? "+" : ""}${sd.tsb} · Fitness ${sd.ctl} · Trötthet ${sd.atl}`);
     const lp = LOADCOLORS.filter(([k]) => ld?.[k]).map(([k, lbl]) => `${lbl} ${Math.round(ld[k])} TSS`).join(" · ");
     parts.push(lp || "Vilodag");
@@ -609,7 +616,7 @@ function pmcSection(h) {
       läs siffran mot hur benen känns, inte tvärtom.</p></section>`);
 }
 
-/* ---------- Effektivitet per gren (0.13.0: axlar, datum, tryckbara punkter) ---------- */
+/* ---------- Effektivitet per gren ---------- */
 const EFFSPORTS = [["run", "Löpning"], ["bike", "Cykel"], ["swim", "Simning"]];
 const EFF_RANGES = [[90, "3M"], [180, "6M"], [370, "Säsong"]];
 
@@ -638,37 +645,38 @@ function effSection(h) {
 
   if (!t.has) { h.push(`<p class="hint">${esc(t.why)}</p></section>`); return; }
 
-  const ys = t.points.map(p => p.y);
+  const H = 170;
+  const ys = t.points.map(pt => pt.y);
   const lo = Math.min(...ys), hi = Math.max(...ys), span = Math.max(hi - lo, 1);
   const col = { run: "var(--run)", bike: "var(--bike)", swim: "var(--swim)" }[sport];
-  const yOf = v => t.lowerBetter ? (v - lo) / span * 88 + 6 : 94 - (v - lo) / span * 88;
-  const xOf = i => (i / Math.max(t.points.length - 1, 1) * 96 + 2).toFixed(1);
-  const dots = t.points.map((p, i) => {
-    const seld = S.effSel === i, cx = xOf(i), cy = yOf(p.y).toFixed(1);
-    return `<circle cx="${cx}" cy="${cy}" r="${seld ? 5 : 3.4}" fill="${col}" opacity=".16"/>
-      <circle cx="${cx}" cy="${cy}" r="${seld ? 2.4 : 1.7}" fill="${col}" stroke="var(--bg)" stroke-width=".55"/>
-      ${seld ? `<circle cx="${cx}" cy="${cy}" r="3.4" fill="none" stroke="var(--accent)" stroke-width=".5"/>` : ""}
-      <circle cx="${cx}" cy="${cy}" r="6.5" fill="transparent" data-effpt="${i}"/>`;
+  const yOf = v => t.lowerBetter ? ((v - lo) / span * 138 + 12) : (H - 20 - (v - lo) / span * 138);
+  const xOf = i => (14 + i / Math.max(t.points.length - 1, 1) * (CW - 28)).toFixed(1);
+  const dots = t.points.map((pt, i) => {
+    const seld = S.effSel === i, cx = xOf(i), cy = yOf(pt.y).toFixed(1);
+    return `<circle cx="${cx}" cy="${cy}" r="${seld ? 9 : 6.5}" fill="${col}" opacity=".13"/>
+      <circle cx="${cx}" cy="${cy}" r="${seld ? 4.6 : 3.4}" fill="${col}" stroke="var(--bg)" stroke-width="1.3"/>
+      ${seld ? `<circle cx="${cx}" cy="${cy}" r="7" fill="none" stroke="var(--accent)" stroke-width="1.2"/>` : ""}
+      <circle cx="${cx}" cy="${cy}" r="13" fill="transparent" data-effpt="${i}"/>`;
   }).join("");
   const selGuide = S.effSel != null && t.points[S.effSel]
-    ? `<line x1="${xOf(S.effSel)}" y1="4" x2="${xOf(S.effSel)}" y2="96" stroke="var(--accent)" stroke-width=".5" stroke-dasharray="2 2" opacity=".6"/>` : "";
+    ? `<line x1="${xOf(S.effSel)}" y1="8" x2="${xOf(S.effSel)}" y2="${H - 8}" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3" opacity=".6"/>` : "";
   const midVal = t.lowerBetter ? lo + span / 2 : hi - span / 2;
   const topLab = t.fmt(t.lowerBetter ? lo : hi), botLab = t.fmt(t.lowerBetter ? hi : lo);
 
-  h.push(`<div class="chartwrap"><div class="ylab"><span>${esc(topLab)}</span><span>${esc(t.fmt(midVal))}</span><span>${esc(botLab)}</span></div>
-    <svg class="spark lg" viewBox="0 0 100 100" preserveAspectRatio="none">
-      <line x1="0" y1="6" x2="100" y2="6" stroke="var(--line-soft)" stroke-width=".4"/>
-      <line x1="0" y1="50" x2="100" y2="50" stroke="var(--line-soft)" stroke-width=".4"/>
-      <line x1="0" y1="94" x2="100" y2="94" stroke="var(--line-soft)" stroke-width=".4"/>
+  h.push(`<div class="chartwrap"><div class="ylab tall3"><span>${esc(topLab)}</span><span>${esc(t.fmt(midVal))}</span><span>${esc(botLab)}</span></div>
+    <svg class="chart" viewBox="0 0 ${CW} ${H}">
+      <line x1="2" y1="12" x2="${CW - 2}" y2="12" stroke="var(--line-soft)" stroke-width=".7"/>
+      <line x1="2" y1="${H / 2}" x2="${CW - 2}" y2="${H / 2}" stroke="var(--line-soft)" stroke-width=".7"/>
+      <line x1="2" y1="${H - 20}" x2="${CW - 2}" y2="${H - 20}" stroke="var(--line-soft)" stroke-width=".7"/>
       ${selGuide}
       <line x1="${xOf(0)}" y1="${yOf(t.first).toFixed(1)}" x2="${xOf(t.points.length - 1)}" y2="${yOf(t.last).toFixed(1)}"
-        stroke="${col}" stroke-width="1.1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke" opacity=".8"/>
+        stroke="${col}" stroke-width="1.4" stroke-dasharray="5 5" opacity=".7"/>
       ${dots}</svg></div>
     <div class="xlab"><span>${esc(t.from)}</span><span>Tryck på en punkt</span><span>${esc(t.to)}</span></div>`);
 
   if (S.effSel != null && t.points[S.effSel]) {
-    const p = t.points[S.effSel];
-    h.push(`<p class="ptdetail">${esc(p.date)} · ${esc(t.fmt(p.y))}${p.hr ? ` @ ${Math.round(p.hr)} bpm` : ""}</p>`);
+    const pt = t.points[S.effSel];
+    h.push(`<p class="ptdetail">${esc(pt.date)} · ${esc(t.fmt(pt.y))}${pt.hr ? ` @ ${Math.round(pt.hr)} bpm` : ""}</p>`);
   }
   h.push(`<p class="hint">Uppåt i grafen = bättre. ${esc(t.why)}</p></section>`);
 }
