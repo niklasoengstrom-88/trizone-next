@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.13.0 · 2026-08-05
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.14.0 · 2026-08-06
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.13.0 · 2026-08-05" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.14.0 · 2026-08-06" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -325,7 +325,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.13.0 · 2026-08-05", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.14.0 · 2026-08-06", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -658,8 +658,9 @@ has(els.app.innerHTML, "28 dagar", "V28-REGELN: procentsiffran bär sitt tidsfö
 has(els.app.innerHTML, "Belastning · 8 veckor", "belastningsgrafen finns");
 has(els.app.innerHTML, "barcol", "staplarna renderas");
 has(els.app.innerHTML, "Timmar per vecka", "grafen säger vad axeln visar");
-has(els.app.innerHTML, "vilopuls", "vilopulskurvan finns när wellness hämtats");
-has(els.app.innerHTML, "Din normal", "kurvan redovisar baslinjen den mäts mot");
+ok(!els.app.innerHTML.includes("Dagsform · vilopuls"),
+   "0.14.0: vilopulskurvan är BORTA — ersatt av inforutan (produktägarbeslut, missades i 0.13.0)");
+has(els.app.innerHTML, "vilopuls", "vilopulsen finns kvar i text — i inforutan och motorförklaringen");
 has(els.app.innerHTML, "ändrar aldrig något själv", "kurvan säger vad motorn gör med avvikelsen");
 has(els.app.innerHTML, "aldrig ur skattningar", "det som saknas redovisas ärligt");
 

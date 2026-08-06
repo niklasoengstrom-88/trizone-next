@@ -1,4 +1,4 @@
-/* TRIZONE Next — styles.css · BUILD next-0.13.0 · 2026-08-05
+/* TRIZONE Next — styles.css · BUILD next-0.14.0 · 2026-08-06
    Tokens enligt designspråk-spec v0.1 §3–§4. Komponenter tillkommer med ui-arbetet. */
 :root{
   --bg:#0A0A0D; --surface:#131318; --surface-hi:#18181F; --surface-lo:#0E0E12;
@@ -402,3 +402,14 @@ main{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
 .ptdetail{margin-top:8px;padding:8px 12px;border-left:3px solid var(--accent);
   background:var(--surface-hi);border-radius:0 10px 10px 0;font-size:13px;
   font-variant-numeric:tabular-nums;color:var(--ink)}
+
+/* ---------- Analys · premium (0.14.0) ----------
+   Höjder som fyller mobilskärmen; punkter med halo + kärna + bakgrundslyft;
+   en orkestrerad rörelse per sektion — aldrig utspridda effekter. */
+.spark.xl{height:224px}
+.spark.lg{height:184px}
+.ylab{min-width:44px}
+.chartwrap{animation:chartin .28s ease-out both}
+@keyframes chartin{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){.chartwrap{animation:none}}
+.ptdetail{animation:chartin .2s ease-out both}
