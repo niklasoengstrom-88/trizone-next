@@ -1943,6 +1943,35 @@ import { orderExport } from "./core.js";
   eq(tomt.engine.lowShareTarget, 0.78, "B6: tom cfg ger ENGINE-defaults");
   ok(o.athlete === "niklas", "B6: atletreferens följer med (inga persondata)"); }
 
+/* ================================================================
+   0.17.1 — Planposition (U5): passerade veckor hopfällda
+   ================================================================ */
+import { pastSummary } from "./core.js";
+
+/* En vecka är passerad först när dess sista dag ligger BAKOM idag —
+   söndagen hör fortfarande till innevarande vecka. Compliance räknas
+   som i veckohuvudet: struket utanför båda, C utanför nämnaren OCH
+   täljaren (ett utfört C-pass förskönar aldrig kvoten). Läser källa +
+   överlagring (F1): pass flyttade in i en passerad vecka räknas där. */
+{ ok(pastSummary(plan, {}, "2026-10-15") === null, "U5: mitt i första veckan — inget är passerat");
+  ok(pastSummary(plan, {}, "2026-10-18") === null, "U5: söndag är veckans sista dag, inte första passerade");
+  eq(pastSummary(plan, {}, "2026-10-19"), { weeks: [42], done: 0, total: 4 },
+     "U5: måndag efter v.42 — en passerad vecka, 4 i nämnaren (2×C räknas inte)");
+  const ov = { sessions: {
+    "sk-w42-swim-css": { match: { activityId: 905 } },       /* härledd utförd */
+    "sk-w42-str-core": { status: "struck" },                  /* struken: utanför båda */
+    "sk-w42-run-easy": { status: "done" } } };                /* C utförd: ändrar inget */
+  eq(pastSummary(plan, ov, "2026-10-19"), { weeks: [42], done: 1, total: 3 },
+     "U5: struket krymper nämnaren, utfört C förskönar aldrig kvoten");
+  eq(pastSummary(plan, ov, "2026-10-26"), { weeks: [42, 43], done: 1, total: 4 },
+     "U5: två passerade veckor aggregeras");
+  const mv = { sessions: { "sk-w43-run-thr": { moved: { week: 42, day: 4 } } } };
+  eq(pastSummary(plan, mv, "2026-10-19"), { weeks: [42], done: 0, total: 5 },
+     "U5: pass flyttat IN i passerad vecka räknas där (F1 — källa + överlagring)");
+  ok(pastSummary(null, {}, "2026-10-19") === null, "U5: utan plan inget påstående, ingen krasch");
+  ok(pastSummary({ weeks: [], sessions: [] }, {}, "2026-10-19") === null,
+     "U5: tom plan ger null, inte en tom sammanfattning"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */

@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.17.0 · 2026-08-10";
+export const BUILD = "next-0.17.1 · 2026-08-10";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -1173,6 +1173,28 @@ export function weekView(plan, overlay, weekNo, bindings = {}) {
 
 /* Veckor som går att bläddra till, i planordning */
 export const planWeeks = plan => (plan?.weeks ?? []).map(w => w.week).sort((a, b) => a - b);
+
+/* ---------- Planposition (U5, 0.17.1) ----------
+   Passerade veckor = sista dagen bakom idag; söndagen hör till innevarande.
+   Aggregerad compliance med veckohuvudets formel: struket utanför båda,
+   C utanför nämnaren och täljaren. Läser via weekView ⇒ källa + överlagring
+   (F1) — pass flyttade in i en passerad vecka räknas där. */
+export function pastSummary(plan, overlay, todayISO) {
+  const past = planWeeks(plan).filter(wk => {
+    const d = weekDates(plan, wk);
+    return d.length === 7 && d[6] < todayISO;
+  });
+  if (!past.length) return null;
+  let done = 0, total = 0;
+  for (const wk of past) {
+    const v = weekView(plan, overlay, wk);
+    const live = [...v.days.flatMap(d => d.sessions), ...v.unplaced]
+      .filter(s => s.status !== "struck" && s.prio !== "C");
+    total += live.length;
+    done += live.filter(s => s.status === "done").length;
+  }
+  return { weeks: past, done, total };
+}
 
 /* ---------- Manuell justering (planformat §5d) ----------
    Användarutlöst, begränsad till regelverkets åtgärdslista. Lagras som

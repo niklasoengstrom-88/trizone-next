@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.17.0 · 2026-08-10
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.17.1 · 2026-08-10
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.17.0 · 2026-08-10" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.17.1 · 2026-08-10" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -331,7 +331,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.17.0 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.17.1 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -762,9 +762,37 @@ clickBtn({ clearcache: "" });
 ok(!mem.has("trizone.next.cache.v1"), "datacachen går att rensa");
 has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på v32 igen");
 
+/* ---------- 0.17.1: Planposition (U5) — passerade veckor hopfällda ----------
+   Tidsskifte via __TZ_TODAY, ÅTERSTÄLLS efteråt. Exakta kvoter testas i
+   core-fixturerna; här testas att vyn fäller, expanderar och återgår. */
+clickBtn({ nav: "plan" });
+ok(!els.app.innerHTML.includes("avklarad"), "U5: inga passerade veckor ⇒ ingen hopfällningsrad");
+has(els.app.innerHTML, "<h1>Vecka 42</h1>", "U5: innevarande vecka renderas som vanligt");
+
+globalThis.__TZ_TODAY = "2026-10-26";                /* måndag efter v.43 */
+clickBtn({ nav: "idag" }); clickBtn({ nav: "plan" });
+has(els.app.innerHTML, "2 avklarade veckor", "U5: två passerade veckor fälls ihop till en rad");
+ok(!els.app.innerHTML.includes("<h1>Vecka 42</h1>"), "U5: passerad vecka renderas inte hopfälld");
+has(els.app.innerHTML, "<h1>Vecka 44</h1>", "U5: innevarande vecka står överst — Plan öppnar på nu");
+has(els.app.innerHTML, "ljusare = hårdare", "U5: zonlegenden följer första SYNLIGA veckan");
+
+clickBtn({ pastopen: "" });
+has(els.app.innerHTML, "<h1>Vecka 42</h1>", "U5: expandering visar de passerade veckorna");
+has(els.app.innerHTML, "Dölj", "U5: raden växlar till Dölj i öppet läge");
+clickBtn({ pastopen: "" });
+ok(!els.app.innerHTML.includes("<h1>Vecka 42</h1>"), "U5: hopfällning igen döljer dem");
+
+globalThis.__TZ_TODAY = "2026-10-19";                /* måndag efter v.42 */
+clickBtn({ nav: "idag" }); clickBtn({ nav: "plan" });
+has(els.app.innerHTML, "1 avklarad vecka", "U5: singularform vid en passerad vecka");
+
+globalThis.__TZ_TODAY = "2026-10-15";                /* ÅTERSTÄLLD */
+clickBtn({ nav: "idag" }); clickBtn({ nav: "plan" });
+ok(!els.app.innerHTML.includes("avklarad"), "U5: tiden återställd — sviten lämnar rent efter sig");
+
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 272;
+const EXPECTED_MIN = 283;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

@@ -15,9 +15,9 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          emptyCache, V32_CACHE_KEY, statusGrid, pmcStatus, effTrend, zoneBand, dailyLoads, dayShift,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
-         orderExport, blockForDate } from "./core.js";
+         orderExport, blockForDate, pastSummary } from "./core.js";
 
-export const UI_BUILD = "next-0.17.0 · 2026-08-10";
+export const UI_BUILD = "next-0.17.1 · 2026-08-10";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -322,7 +322,15 @@ function renderPlan(h) {
   if (S.tapMove) h.push(`<div class="banner sticky">Tryck på en dag för <b>${esc(S.tapMove.title ?? S.tapMove.id)}</b>
     <button class="txtbtn" data-cancel="1">Avbryt</button></div>`);
 
+  /* U5 (0.17.1): passerade veckor hopfällda — Plan öppnar på nu */
+  const past = pastSummary(S.plan, S.overlay, today());
+  if (past) h.push(`<button class="pastfold${S.pastOpen ? " open" : ""}" data-pastopen>
+    <span>✓ ${past.weeks.length} avklarad${past.weeks.length === 1 ? " vecka" : "e veckor"} · ${past.done}/${past.total} pass</span>
+    <span class="chev">${S.pastOpen ? "Dölj" : "Visa"}</span></button>`);
+
+  let firstShown = true;
   for (const [wi, wk] of weeks.entries()) {
+    if (past && !S.pastOpen && past.weeks.includes(wk)) continue;
     const v = weekView(S.plan, S.overlay, wk);
     const sum = v.summary;
     h.push(`<section class="wk" id="wk-${wk}">
@@ -343,8 +351,9 @@ function renderPlan(h) {
              return done ? `<span class="compl"><b>${done}</b> av ${live.length} utförda</span>` : ""; })()}
         </div>
         ${sum.minutes ? `<div class="wkzone">${zstrip(sum.zones.map((m, z) => [z + 1, m]).filter(p => p[1] > 0), true)}
-          ${wi === 0 ? `<span class="legend">ljusare = hårdare</span>` : ""}</div>` : ""}
+          ${firstShown ? `<span class="legend">ljusare = hårdare</span>` : ""}</div>` : ""}
       </header>`);
+    firstShown = false;
 
     for (const d of v.days) {
       const trainday = true;
@@ -1172,7 +1181,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-order],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
+    const t = ev.target.closest("[data-act],[data-order],[data-pastopen],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -1356,6 +1365,7 @@ function wire() {
       } catch (e) { S.note = { text: "Nedladdning misslyckades: " + e.message, bad: true }; }
       render(); return;
     }
+    if (t.dataset.pastopen != null) { S.pastOpen = !S.pastOpen; render(); return; }
     if (t.dataset.order != null) {        /* B6: komponeras här, skrivs aldrig till lagring */
       const json = JSON.stringify(orderExport({ cfg: S.cfg, plan: S.plan,
                                                 athlete: S.athlete, now: now() }), null, 2);
