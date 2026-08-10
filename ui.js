@@ -2,7 +2,7 @@
    Designspråk v0.1 (S4 rev 0.5.0: dagrader, fönsterchips som metadata) · beslut A+B 2026-08-02.
    Byggstämpelparitet över ALLA fem filer: core, ui, index (meta), sw (aktiv cache), plan. */
 "use strict";
-import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
+import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks, weekDates,
          manualAdjust, shortDate, DAYLABEL, WINDOWS, SPORTS, DEFAULT_CFG, resolveOrphan,
          todayView, planDayOf, effectiveRpe, logResult, unlogResult, FEEL_LABEL, sessionDate,
          monthView, planMonths, curtainReduce, curtainIdle,
@@ -17,7 +17,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
          orderExport, blockForDate, pastSummary, buildPosition } from "./core.js";
 
-export const UI_BUILD = "next-0.18.0 · 2026-08-10";
+export const UI_BUILD = "next-0.18.1 · 2026-08-10";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -294,14 +294,19 @@ function confirmSection(h) {
   h.push(`</section>`);
 }
 
-/* ---------- Läget — längst ner i överblicken (demo v13, G1) ---------- */
+/* ---------- Livslägen & dagsform (0.18.1, demo bild 3) ----------
+   Periodlägena som finns idag. Dagsform-chipsen (Dålig natt) kräver 0.19:s
+   regelarbete — inga döda knappar skeppas. */
 function modesSection(h) {
-  h.push(`<section class="modes"><div class="eyebrow">Läget</div>
-    <div class="chiprow">${Object.entries(LIFE_MODES).map(([rule, m]) => {
+  h.push(`<section class="modes card"><div class="eyebrow">Livslägen &amp; dagsform</div>
+    <p class="hint">Alla regler som formar planen — samlade här. Idag-fliken flaggar när något är aktivt.</p>
+    <div class="slot-lbl">Period</div>
+    <div class="lifemodes">${Object.entries(LIFE_MODES).map(([rule, m]) => {
       const on = (S.overlay?.modes?.active ?? []).find(a => a.rule === rule);
-      return `<button class="modetog${on ? " on" : ""}" data-mode="${rule}"
-        aria-pressed="${!!on}">${m.label}</button>`;
+      return `<button class="chipbtn modetog${on ? " on" : ""}" data-mode="${rule}"
+        aria-pressed="${!!on}"><span class="dot"></span>${m.label}</button>`;
     }).join("")}</div>
+    <p class="cue">${Object.values(LIFE_MODES).map(m => `${m.label}: ${m.why}`).join(" ")}</p>
     <p class="hint">Lägen rör pass — aldrig blockgränser, loppdatum eller delmål. Allt går att ångra.</p>
   </section>`);
 }
@@ -350,6 +355,20 @@ function compactRow(s) {
   </div>`;
 }
 
+/* ---------- Innevarande vecka (0.18.1) ----------
+   Beräknas vid varje rendering — S.week från boot blir fel när veckan
+   skiftar med appen öppen. Idag i planen ⇒ den veckan; annars nästa
+   kommande; annars sista. Uppdaterar S.week så Idag-fabben följer med. */
+function currentWeek() {
+  const ws = planWeeks(S.plan);
+  const t = today();
+  const cur = ws.find(w => { const d = weekDates(S.plan, w); return d[0] <= t && t <= d[6]; })
+           ?? ws.find(w => weekDates(S.plan, w)[0] > t)
+           ?? ws[ws.length - 1] ?? null;
+  if (cur != null) S.week = cur;
+  return cur;
+}
+
 /* ---------- Plan: överblick (0.18) ----------
    Struktur beslutad 2026-08-10: hero → frågor/bekräftelser → pastfold →
    veckolista (kompaktrader) → Läget → utanför plan. Omplanera (U3) är
@@ -374,9 +393,15 @@ function renderPlan(h) {
     <span>✓ ${past.weeks.length} avklarad${past.weeks.length === 1 ? " vecka" : "e veckor"} · ${past.done}/${past.total} pass</span>
     <span class="chev">${S.pastOpen ? "Dölj" : "Visa"}</span></button>`);
 
-  let firstShown = true;
-  for (const wk of weeks) {
-    if (past && !S.pastOpen && past.weeks.includes(wk)) continue;
+  /* 0.18.1 (demo bild 2): överblicken visar BARA innevarande vecka.
+     Kommande veckor bor i Omplanera — överblicken ska läsas på fem sekunder.
+     Öppnad pastfold visar de passerade veckorna i samma kompakta form. */
+  const cw = currentWeek();
+  const showWeeks = S.pastOpen && past
+    ? [...past.weeks, cw].filter((w, i, a) => a.indexOf(w) === i)
+    : [cw];
+  for (const wk of showWeeks) {
+    if (!weeks.includes(wk)) continue;
     const v = weekView(S.plan, S.overlay, wk);
     const sum = v.summary;
     const live = [...v.days.flatMap(d => d.sessions), ...v.unplaced]
@@ -384,11 +409,7 @@ function renderPlan(h) {
     const done = live.filter(s => s.status === "done").length;
     h.push(`<section class="wk" id="wk-${wk}">
       <header class="wkhead">
-        <div class="wkrow">
-          <h1>Vecka ${wk}</h1>
-          <span class="wkdates">${shortDate(v.days[0].date)} – ${shortDate(v.days[6].date)}</span>
-          <span class="wktype">${esc(v.week?.type === "normal" ? "" : v.week?.type ?? "")}</span>
-        </div>
+        <div class="eyebrow">${wk === cw ? "Denna vecka · " : ""}v.${wk} (${shortDate(v.days[0].date)} – ${shortDate(v.days[6].date)})${v.week?.type && v.week.type !== "normal" ? ` · ${esc(v.week.type)}` : ""}</div>
         ${v.week?.focus ? `<p class="focus">${esc(v.week.focus)}</p>` : ""}
         <div class="sums">
           <span class="compl"><b>${done}</b> av ${live.length} pass utförda</span>
@@ -397,9 +418,8 @@ function renderPlan(h) {
           ${sum.struck ? `<span class="dim">${sum.struck} struket</span>` : ""}
         </div>
         ${sum.minutes ? `<div class="wkzone">${zstrip(sum.zones.map((m, z) => [z + 1, m]).filter(p => p[1] > 0), true)}
-          ${firstShown ? `<span class="legend">ljusare = hårdare</span>` : ""}</div>` : ""}
+          <span class="legend">ljusare = hårdare</span></div>` : ""}
       </header>`);
-    firstShown = false;
 
     for (const d of v.days) {
       if (!d.sessions.length) continue;                    /* överblicken visar träning, inte tomrum */
@@ -412,12 +432,31 @@ function renderPlan(h) {
       <div class="dhead"><span class="dname">Att placera</span><span class="ddate">${v.unplaced.length}</span></div>
       ${v.unplaced.map(compactRow).join("")}
     </div>`);
-    h.push(`</section>`);
+    h.push(`<div class="acts"><button class="ghostbtn" data-nav="omplanera">Omplanera pass …</button></div>
+    </section>`);
   }
 
   modesSection(h);
   offplanSection(h);
   h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
+}
+
+/* ---------- Dragbar kompaktrad i Omplanera (0.18.1) ----------
+   Samma data-sess ⇒ tryck = sheet, långtryck = drag. Duration alltid med —
+   här flyttar man dos, inte läser prosa. Zonbandet är utelämnat med avsikt. */
+function rearrRow(s) {
+  const struck = s.status === "struck";
+  return `<div class="crow rearr${struck ? " struck" : ""}${s.status === "done" ? " done" : ""}"
+      data-sess="${esc(s.id)}" tabindex="0" role="button"
+      aria-label="${esc(s.title ?? s.id)}, ${s.durationMin} minuter">
+    <i class="cdot" style="background:var(--${esc(s.sport)})"></i>
+    <span class="ctitle">${esc(s.title ?? s.id)}</span>
+    <span class="cslot">${s.durationMin} min${s.slot ? ` · ${esc(s.slot)}` : ""}</span>
+    ${badges(s)}
+    ${s.status === "done" ? `<span class="donetag">✓</span>`
+      : struck ? `<span class="tag">struket</span>`
+      : `<span class="prio p${esc(s.prio)}">${esc(s.prio)}</span>`}
+  </div>`;
 }
 
 /* ---------- Omplanera (U3, 0.18): gamla Plan-vyn, oförändrad interaktion ----------
@@ -445,34 +484,25 @@ function renderOmplanera(h) {
     if (past && !S.pastOpen && past.weeks.includes(wk)) continue;
     const v = weekView(S.plan, S.overlay, wk);
     const sum = v.summary;
-    h.push(`<section class="wk" id="wk-${wk}">
-      <header class="wkhead">
-        <div class="wkrow">
-          <h1>Vecka ${wk}</h1>
-          <span class="wkdates">${shortDate(v.days[0].date)} – ${shortDate(v.days[6].date)}</span>
-          <span class="wktype">${esc(v.week?.type === "normal" ? "" : v.week?.type ?? "")}</span>
-        </div>
-        <div class="sums">
-          <span><b>${sum.planned}</b> pass</span>
-          <span><b>${Math.round(sum.minutes / 6) / 10}</b> h</span>
-          ${sum.struck ? `<span class="dim">${sum.struck} struket</span>` : ""}
-        </div>
+    h.push(`<section class="wk slim" id="wk-${wk}">
+      <header class="wkhead slim">
+        <span class="wkline"><b>Vecka ${wk}</b> · ${shortDate(v.days[0].date)} – ${shortDate(v.days[6].date)}
+          · ${sum.planned} pass · ${Math.round(sum.minutes / 6) / 10} h${sum.struck ? ` · ${sum.struck} struket` : ""}${v.week?.type && v.week.type !== "normal" ? ` · ${esc(v.week.type)}` : ""}</span>
       </header>`);
 
     for (const d of v.days) {
-      const trainday = true;
-      h.push(`<section class="day${d.date === today() ? " today" : ""}${d.sessions.length ? "" : " empty"}${trainday ? "" : " off"}"
+      h.push(`<section class="day slim${d.date === today() ? " today" : ""}${d.sessions.length ? "" : " empty"}"
           data-day="${wk}|${d.day}">
         <div class="dhead"><span class="dname">${d.label}</span><span class="ddate">${shortDate(d.date)}</span>
           ${d.minutes ? `<span class="dmin">${d.minutes} min</span>` : ""}</div>
-        <div class="dsessions">${d.sessions.map(sessionCard).join("")}</div>
-        ${S.tapMove ? `<button class="target" data-target="${wk}|${d.day}">Hit</button>` : ""}
+        ${d.sessions.map(rearrRow).join("")}
+        ${S.tapMove ? `<button class="target slim" data-target="${wk}|${d.day}">Hit</button>` : ""}
       </section>`);
     }
 
-    if (v.unplaced.length) h.push(`<section class="menu">
+    if (v.unplaced.length) h.push(`<section class="menu slim">
       <div class="eyebrow">Att placera · v.${wk} · ${v.unplaced.length}</div>
-      ${v.unplaced.map(sessionCard).join("")}
+      ${v.unplaced.map(rearrRow).join("")}
     </section>`);
     h.push(`</section>`);
   }

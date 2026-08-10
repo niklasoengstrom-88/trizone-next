@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.18.0 · 2026-08-10
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.18.1 · 2026-08-10
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.18.0 · 2026-08-10" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.18.1 · 2026-08-10" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -331,7 +331,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.18.0 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.18.1 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -354,10 +354,10 @@ has(els.app.innerHTML, "forsvunnet-pass-1", "den föräldralösa posten visas me
   ok(!els.app.innerHTML.includes("Föräldralösa"), "tömd lista försvinner ur vyn"); }
 clickBtn({ nav: "plan" });
 
-/* ---------- Överblicken (0.18): hero, veckolista, kompaktrader ---------- */
-has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
-has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
-has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
+/* ---------- Överblicken (0.18.1): BARA innevarande vecka ---------- */
+has(els.app.innerHTML, "Denna vecka · v.42", "innevarande vecka pekas ut (demo bild 2)");
+ok(!els.app.innerHTML.includes("v.43 ("), "vecka 43 visas INTE i överblicken — den bor i Omplanera");
+ok(!els.app.innerHTML.includes("v.44 ("), "vecka 44 visas INTE i överblicken");
 has(els.app.innerHTML, "12 okt – 18 okt", "veckorubriken bär sina datum");
 has(els.app.innerHTML, "ljusare = hårdare", "zonrampens legend finns");
 ok(!els.app.innerHTML.includes('class="wtag"'), "fönstertaggen är borta ur kortet (0.5.2)");
@@ -368,16 +368,25 @@ has(els.app.innerHTML, "% av bygget avklarat", "byggprocenten sägs i klartext, 
 has(els.app.innerHTML, "vecka 1 av 3 i blocket", "blockpositionen ur buildPosition — 15 okt är vecka 1");
 has(els.app.innerHTML, "todaypin", "nu-markören står i fasbandet");
 has(els.app.innerHTML, "pass utförda", "veckohuvudet bär compliance (demo bild 2)");
-ok((els.app.innerHTML.match(/class="crow/g) ?? []).length >= 8, "kompaktrader — alla pass som rader, inte kort");
+ok((els.app.innerHTML.match(/class="crow/g) ?? []).length >= 3, "kompaktrader — veckans pass som rader, inte kort");
 ok(!els.app.innerHTML.includes("data-target"), "överblicken har inga dagmål — flytt bor i Omplanera (U3)");
 has(els.app.innerHTML, 'data-nav="omplanera" aria-label="Till omplanering"', "kalendersymbolen i Plan leder till Omplanera");
-has(els.app.innerHTML, 'data-mode="mode-vacation"', "Läget ligger kvar i överblicken — längst ner (demo, G1)");
+has(els.app.innerHTML, "Omplanera pass …", "textvägen till Omplanera finns under veckan (demo bild 2)");
+has(els.app.innerHTML, 'data-mode="mode-vacation"', "livslägena bor i överblicken (demo bild 3)");
+has(els.app.innerHTML, "Livslägen &amp; dagsform", "lägeskortet bär demons rubrik");
+has(els.app.innerHTML, 'class="chipbtn modetog', "lägena är prickchips, inte togglar");
+has(els.app.innerHTML, "Feber tränas aldrig igenom", "cue-texten förklarar vad varje läge gör");
 
-/* ---------- Omplanera (U3): gamla vyn oförändrad bakom kalendersymbolen ---------- */
+/* ---------- Omplanera (U3): flyttvyn — hela planen, kompakta rader ---------- */
 clickBtn({ nav: "omplanera" });
 has(els.app.innerHTML, ">Omplanera<", "Omplanera-vyn har ett huvud");
+has(els.app.innerHTML, "Vecka 42", "vecka 42 i Omplanera");
+has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
+has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
 ok((els.app.innerHTML.match(/class="day/g) ?? []).length === 21, "21 dagrader — hela planen i följd");
-has(els.app.innerHTML, "50 min", "kortet bär gren, prio, duration och titel — inget mer");
+ok((els.app.innerHTML.match(/class="day slim empty"|class="day slim" |class="day slim today"/g) ?? []).length >= 15,
+   "dagraderna är slimmade — tomma som fyllda (0.18.1)");
+has(els.app.innerHTML, "50 min", "raden bär gren, prio, duration och titel — inget mer");
 has(els.app.innerHTML, 'data-nav="plan" aria-label="Tillbaka till planen"', "återvägen till överblicken finns");
 has(els.app.innerHTML, 'class="tab active" data-nav="plan"', "Plan-fliken lyser även i undervyn");
 ok(!els.app.innerHTML.includes('data-mode="mode-vacation"'), "livslägena bor i överblicken, inte i flyttvyn");
@@ -787,20 +796,20 @@ has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på 
    core-fixturerna; här testas att vyn fäller, expanderar och återgår. */
 clickBtn({ nav: "plan" });
 ok(!els.app.innerHTML.includes("avklarad"), "U5: inga passerade veckor ⇒ ingen hopfällningsrad");
-has(els.app.innerHTML, "<h1>Vecka 42</h1>", "U5: innevarande vecka renderas som vanligt");
+has(els.app.innerHTML, "Denna vecka · v.42", "U5: innevarande vecka renderas som vanligt");
 
 globalThis.__TZ_TODAY = "2026-10-26";                /* måndag efter v.43 */
 clickBtn({ nav: "idag" }); clickBtn({ nav: "plan" });
 has(els.app.innerHTML, "2 avklarade veckor", "U5: två passerade veckor fälls ihop till en rad");
-ok(!els.app.innerHTML.includes("<h1>Vecka 42</h1>"), "U5: passerad vecka renderas inte hopfälld");
-has(els.app.innerHTML, "<h1>Vecka 44</h1>", "U5: innevarande vecka står överst — Plan öppnar på nu");
-has(els.app.innerHTML, "ljusare = hårdare", "U5: zonlegenden följer första SYNLIGA veckan");
+ok(!els.app.innerHTML.includes("v.42 ("), "U5: passerad vecka renderas inte hopfälld");
+has(els.app.innerHTML, "Denna vecka · v.44", "U5: veckoskiftet följer med UTAN omstart (0.18.1-buggen)");
+has(els.app.innerHTML, "ljusare = hårdare", "U5: zonlegenden följer den synliga veckan");
 
 clickBtn({ pastopen: "" });
-has(els.app.innerHTML, "<h1>Vecka 42</h1>", "U5: expandering visar de passerade veckorna");
+has(els.app.innerHTML, "v.42 (", "U5: expandering visar de passerade veckorna");
 has(els.app.innerHTML, "Dölj", "U5: raden växlar till Dölj i öppet läge");
 clickBtn({ pastopen: "" });
-ok(!els.app.innerHTML.includes("<h1>Vecka 42</h1>"), "U5: hopfällning igen döljer dem");
+ok(!els.app.innerHTML.includes("v.42 ("), "U5: hopfällning igen döljer dem");
 
 globalThis.__TZ_TODAY = "2026-10-19";                /* måndag efter v.42 */
 clickBtn({ nav: "idag" }); clickBtn({ nav: "plan" });
@@ -812,7 +821,7 @@ ok(!els.app.innerHTML.includes("avklarad"), "U5: tiden återställd — sviten l
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 297;
+const EXPECTED_MIN = 305;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
