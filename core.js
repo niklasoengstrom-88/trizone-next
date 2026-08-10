@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.17.1 · 2026-08-10";
+export const BUILD = "next-0.18.0 · 2026-08-10";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -292,6 +292,46 @@ export function phaseLowShare(plan, ref = {}, cfg = {}) {
   if (block?.lowShare != null)
     return { target: block.lowShare, source: "block", label: block.label ?? block.id };
   return { target: cfg.lowShareTarget ?? ENGINE.lowShareTarget, source: "profil", label: null };
+}
+
+/* ---------- Byggposition (0.18, planhero) ----------
+   Ren aritmetik på block.start + weeks. "% av bygget" = hela dagar avklarade
+   FÖRE idag / blockens samlade dagar — dag 1 är 0 %, dagen efter sista 100 %.
+   state: before | in | gap | after. Glapp mellan block ger gap: passerade
+   block räknas, inget block/veckotal påstås. Aldrig krasch, aldrig gissning. */
+export function buildPosition(plan, todayISO) {
+  const blocks = (plan?.blocks ?? [])
+    .filter(b => /^\d{4}-\d{2}-\d{2}$/.test(b.start ?? "") && b.weeks > 0)
+    .slice().sort((a, b) => a.start.localeCompare(b.start));
+  if (!blocks.length || !/^\d{4}-\d{2}-\d{2}$/.test(todayISO ?? "")) return null;
+  const dayN = iso => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000;
+  const t = dayN(todayISO);
+  const totalDays = blocks.reduce((n, b) => n + b.weeks * 7, 0);
+  let elapsed = 0, acc = 0, cur = null, weekInBlock = null, buildWeek = null;
+  const bands = blocks.map(b => {
+    const s = dayN(b.start), e = s + b.weeks * 7;            /* e exklusiv */
+    let state = "future";
+    if (t >= e) { state = "past"; elapsed += b.weeks * 7; }
+    else if (t >= s) {
+      state = "cur"; cur = b;
+      const into = t - s;
+      elapsed += into;
+      weekInBlock = Math.floor(into / 7) + 1;
+      buildWeek = Math.floor((acc + into) / 7) + 1;
+    }
+    acc += b.weeks * 7;
+    return { id: b.id, label: b.label ?? b.id, weeks: b.weeks, state };
+  });
+  const state = cur ? "in"
+              : t < dayN(blocks[0].start) ? "before"
+              : bands.every(x => x.state === "past") ? "after" : "gap";
+  return {
+    state, bands, totalWeeks: totalDays / 7,
+    block: cur ? { id: cur.id, label: cur.label ?? cur.id, weeks: cur.weeks } : null,
+    weekInBlock, buildWeek,
+    pct: Math.round(elapsed / totalDays * 100),
+    pinPct: Math.min(100, Math.max(0, elapsed / totalDays * 100))
+  };
 }
 
 /* Restriktivitetsordning för D4 (mest restriktiv vinner vid lika nivå) */

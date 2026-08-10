@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.17.1 · 2026-08-10
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.18.0 · 2026-08-10
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.17.1 · 2026-08-10" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.18.0 · 2026-08-10" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -331,7 +331,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.17.1 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.18.0 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -354,17 +354,34 @@ has(els.app.innerHTML, "forsvunnet-pass-1", "den föräldralösa posten visas me
   ok(!els.app.innerHTML.includes("Föräldralösa"), "tömd lista försvinner ur vyn"); }
 clickBtn({ nav: "plan" });
 
-/* ---------- Löpande listan ---------- */
+/* ---------- Överblicken (0.18): hero, veckolista, kompaktrader ---------- */
 has(els.app.innerHTML, "Vecka 42", "vecka 42 i listan");
 has(els.app.innerHTML, "Vecka 43", "vecka 43 i samma lista — ingen bläddring");
 has(els.app.innerHTML, "Vecka 44", "vecka 44 i samma lista");
-ok((els.app.innerHTML.match(/class="day/g) ?? []).length === 21, "21 dagrader — hela planen i följd");
 has(els.app.innerHTML, "12 okt – 18 okt", "veckorubriken bär sina datum");
 has(els.app.innerHTML, "ljusare = hårdare", "zonrampens legend finns");
 ok(!els.app.innerHTML.includes('class="wtag"'), "fönstertaggen är borta ur kortet (0.5.2)");
-has(els.app.innerHTML, "50 min", "kortet bär gren, prio, duration och titel — inget mer");
 has(els.app.innerHTML, "data-today", "Idag-knappen finns");
 ok(!/undefined|NaN|\[object/.test(els.app.innerHTML), "ingen undefined/NaN läcker ut i markup");
+has(els.app.innerHTML, 'class="planhero"', "planheron renderas överst (0.18)");
+has(els.app.innerHTML, "% av bygget avklarat", "byggprocenten sägs i klartext, aldrig bara en stapel");
+has(els.app.innerHTML, "vecka 1 av 3 i blocket", "blockpositionen ur buildPosition — 15 okt är vecka 1");
+has(els.app.innerHTML, "todaypin", "nu-markören står i fasbandet");
+has(els.app.innerHTML, "pass utförda", "veckohuvudet bär compliance (demo bild 2)");
+ok((els.app.innerHTML.match(/class="crow/g) ?? []).length >= 8, "kompaktrader — alla pass som rader, inte kort");
+ok(!els.app.innerHTML.includes("data-target"), "överblicken har inga dagmål — flytt bor i Omplanera (U3)");
+has(els.app.innerHTML, 'data-nav="omplanera" aria-label="Till omplanering"', "kalendersymbolen i Plan leder till Omplanera");
+has(els.app.innerHTML, 'data-mode="mode-vacation"', "Läget ligger kvar i överblicken — längst ner (demo, G1)");
+
+/* ---------- Omplanera (U3): gamla vyn oförändrad bakom kalendersymbolen ---------- */
+clickBtn({ nav: "omplanera" });
+has(els.app.innerHTML, ">Omplanera<", "Omplanera-vyn har ett huvud");
+ok((els.app.innerHTML.match(/class="day/g) ?? []).length === 21, "21 dagrader — hela planen i följd");
+has(els.app.innerHTML, "50 min", "kortet bär gren, prio, duration och titel — inget mer");
+has(els.app.innerHTML, 'data-nav="plan" aria-label="Tillbaka till planen"', "återvägen till överblicken finns");
+has(els.app.innerHTML, 'class="tab active" data-nav="plan"', "Plan-fliken lyser även i undervyn");
+ok(!els.app.innerHTML.includes('data-mode="mode-vacation"'), "livslägena bor i överblicken, inte i flyttvyn");
+clickBtn({ nav: "plan" });
 
 /* ---------- Utfall: härledd status ur v32-cachen (0.6.0) ---------- */
 clickBtn({ nav: "installningar" });
@@ -494,11 +511,14 @@ await new Promise(r => setTimeout(r, 10));
   ok(![...mem.values()].some(v => String(v).includes("trizone-next-bestallning")),
      "beställningen lagras ALDRIG — komponeras på begäran och lämnar inga spår"); }
 
-/* ---------- 0.17.0: Fasbriefing (B1) i Plan ---------- */
+/* ---------- Fasbriefing (B1) — bor i planheron sedan 0.18 (U1) ---------- */
 clickBtn({ nav: "plan" });
-has(els.app.innerHTML, "Skelettblocket bygger vanan", "fasbriefingen renderas i Plan, kvarliggande hela fasen");
-has(els.app.innerHTML, "Fas · Skelettblock", "briefen bär blockets etikett som eyebrow");
-has(els.app.innerHTML, 'class="phasebrief"', "briefen är en ramlös sektion (L1), inte ett kort");
+has(els.app.innerHTML, "Fas · Skelettblock", "briefexpandern bär blockets etikett som eyebrow");
+ok(!els.app.innerHTML.includes("Skelettblocket bygger vanan"), "briefen är hopfälld tills man ber om den");
+clickBtn({ briefopen: "" });
+has(els.app.innerHTML, "Skelettblocket bygger vanan", "expandern fäller ut hela briefen — texten oavkortad");
+clickBtn({ briefopen: "" });
+ok(!els.app.innerHTML.includes("Skelettblocket bygger vanan"), "…och går att fälla ihop igen");
 
 /* ================================================================
    FAS B — anslutning, hämtning, fallback, wellness (0.10.0)
@@ -792,7 +812,7 @@ ok(!els.app.innerHTML.includes("avklarad"), "U5: tiden återställd — sviten l
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 283;
+const EXPECTED_MIN = 297;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

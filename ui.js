@@ -15,9 +15,9 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          emptyCache, V32_CACHE_KEY, statusGrid, pmcStatus, effTrend, zoneBand, dailyLoads, dayShift,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
-         orderExport, blockForDate, pastSummary } from "./core.js";
+         orderExport, blockForDate, pastSummary, buildPosition } from "./core.js";
 
-export const UI_BUILD = "next-0.17.1 · 2026-08-10";
+export const UI_BUILD = "next-0.18.0 · 2026-08-10";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -105,11 +105,13 @@ function render() {
   const h = [];
   if (S.view === "idag") renderIdag(h);
   else if (S.view === "plan") renderPlan(h);
+  else if (S.view === "omplanera") renderOmplanera(h);     /* U3: undervy till Plan */
   else if (S.view === "analys") renderAnalys(h);
   else renderSettings(h);
+  const tabOf = id => S.view === id || (S.view === "omplanera" && id === "plan");
   h.push(`<nav class="tabs" aria-label="Huvudnavigering">` + NAV.map(([id, label]) =>
-    `<button class="tab${S.view === id ? " active" : ""}" data-nav="${id}"
-       aria-current="${S.view === id ? "page" : "false"}">${label}</button>`).join("") + `</nav>`);
+    `<button class="tab${tabOf(id) ? " active" : ""}" data-nav="${id}"
+       aria-current="${tabOf(id) ? "page" : "false"}">${label}</button>`).join("") + `</nav>`);
   if (S.sel) { const s = findSess(S.sel); if (s) h.push(sheet(s)); }
   if (S.note) h.push(`<div class="toast${S.note.bad ? " bad" : ""}">${esc(S.note.text)}</div>`);
   app().innerHTML = h.join("");
@@ -274,23 +276,26 @@ function renderIdag(h) {
   }
 }
 
-/* ---------- Plan: löpande veckolista (beslut B) ---------- */
-function renderPlan(h) {
-  const weeks = planWeeks(S.plan);
+/* ---------- Matchbekräftelser (§5c) — bor i överblicken: de föder compliance ---------- */
+function confirmSection(h) {
+  if (!S.mq.length) return;
+  h.push(`<section class="confirm"><div class="eyebrow">Att bekräfta · ${S.mq.length}</div>`);
+  for (const q of S.mq) {
+    const a = actById(q.activityId), s = findSess(q.sessionId);
+    if (!a || !s) continue;
+    h.push(`<div class="qrow">
+      <div class="qtext"><b>${esc(a.name || SPORTLABEL[s.sport] || "Aktivitet")}</b>
+        <span class="dim">${esc(matchDate(a.start_date_local) ?? "")} · ${Math.round(a.moving_time / 60)} min</span>
+        <span class="qvs">→ ${esc(s.title ?? s.id)}?</span></div>
+      <div class="qacts"><button data-link="${esc(q.sessionId)}|${a.id}|${q.score}">Länka</button>
+      <button class="ghostbtn" data-nolink="${esc(q.sessionId)}|${a.id}">Nej</button></div>
+    </div>`);
+  }
+  h.push(`</section>`);
+}
 
-  h.push(`<header class="viewhead"><h1>Planen</h1>
-    <span class="hicons">
-      <button class="hicon" data-nav="installningar" aria-label="Till inställningar">${ICO.user}</button>
-    </span></header>`);
-
-  /* Fasbriefing (B1): innevarande blocks brief, kvarliggande hela fasen.
-     Ramlös sektion (L1), textkanalen (serif, S3). 0.18 flyttar den in i planheron. */
-  const curBlock = blockForDate(S.plan, today());
-  if (curBlock?.text?.brief) h.push(`<section class="phasebrief">
-    <div class="eyebrow">Fas · ${esc(curBlock.label ?? curBlock.id)}</div>
-    <p class="brief">${esc(curBlock.text.brief)}</p>
-  </section>`);
-
+/* ---------- Läget — längst ner i överblicken (demo v13, G1) ---------- */
+function modesSection(h) {
   h.push(`<section class="modes"><div class="eyebrow">Läget</div>
     <div class="chiprow">${Object.entries(LIFE_MODES).map(([rule, m]) => {
       const on = (S.overlay?.modes?.active ?? []).find(a => a.rule === rule);
@@ -299,37 +304,144 @@ function renderPlan(h) {
     }).join("")}</div>
     <p class="hint">Lägen rör pass — aldrig blockgränser, loppdatum eller delmål. Allt går att ångra.</p>
   </section>`);
+}
 
+/* ---------- Planhero v1 (0.18, demo v13) ----------
+   buildPosition är ren corefunktion — här bara rendering. Briefing (U1)
+   expanderbar under fasbandet; S.briefOpen är rent vytillstånd. */
+function planHero(h) {
+  const bp = buildPosition(S.plan, today());
+  if (!bp) return;
+  const cur = blockForDate(S.plan, today());
+  const big = bp.state === "in" ? `V. ${bp.buildWeek}`
+            : bp.state === "before" ? "Snart" : bp.state === "gap" ? "Mellan block" : "Klart";
+  const meta = bp.state === "in"
+    ? `av ${bp.totalWeeks}${bp.block ? ` · ${esc(bp.block.label)} · vecka ${bp.weekInBlock} av ${bp.block.weeks} i blocket` : ""}`
+    : bp.state === "before" ? `bygget börjar om ${bp.totalWeeks} veckor räknat` : `${bp.totalWeeks} veckors bygge`;
+  h.push(`<section class="planhero">
+    <div class="big"><span class="n">${big}</span><span class="u">${meta}</span></div>
+    <div class="phaseband">${bp.bands.map(b =>
+      `<div class="phase ${b.state === "past" ? "past" : b.state === "cur" ? "cur" : ""}"
+        style="flex:${b.weeks}"><span>${esc(b.label)}</span></div>`).join("")}
+      <div class="todaypin" style="left:${bp.pinPct}%"></div></div>
+    <div class="meter"><div class="fill" style="width:${bp.pct}%"></div></div>
+    <div class="meter-lbl"><span>${bp.pct} % av bygget avklarat</span><span>${bp.totalWeeks} veckor totalt</span></div>
+    ${cur?.text?.brief ? `<button class="brieffold${S.briefOpen ? " open" : ""}" data-briefopen>
+        <span class="eyebrow">Fas · ${esc(cur.label ?? cur.id)}</span>
+        <span class="chev">${S.briefOpen ? "Dölj" : "Om fasen"}</span></button>
+      ${S.briefOpen ? `<p class="brief">${esc(cur.text.brief)}</p>` : ""}` : ""}
+  </section>`);
+}
+
+/* ---------- Kompaktrad (0.18, demo bild 2): prick + titel + fönster + prio ----------
+   Bär data-sess ⇒ tryck öppnar samma passdetalj-sheet som överallt annars. */
+function compactRow(s) {
+  const struck = s.status === "struck";
+  return `<div class="crow${struck ? " struck" : ""}${s.status === "done" ? " done" : ""}"
+      data-sess="${esc(s.id)}" tabindex="0" role="button"
+      aria-label="${esc(s.title ?? s.id)}, ${s.durationMin} minuter">
+    <i class="cdot" style="background:var(--${esc(s.sport)})"></i>
+    <span class="ctitle">${esc(s.title ?? s.id)}</span>
+    ${s.slot ? `<span class="cslot">${esc(s.slot)}</span>` : `<span class="cslot dim">${s.durationMin} min</span>`}
+    ${badges(s)}
+    ${s.status === "done" ? `<span class="donetag">✓ utfört</span>`
+      : struck ? `<span class="tag">struket</span>`
+      : `<span class="prio p${esc(s.prio)}">${esc(s.prio)}</span>`}
+  </div>`;
+}
+
+/* ---------- Plan: överblick (0.18) ----------
+   Struktur beslutad 2026-08-10: hero → frågor/bekräftelser → pastfold →
+   veckolista (kompaktrader) → Läget → utanför plan. Omplanera (U3) är
+   egen vy bakom kalendersymbolen — överblicken flyttar aldrig något. */
+function renderPlan(h) {
+  const weeks = planWeeks(S.plan);
+
+  h.push(`<header class="viewhead"><h1>Planen</h1>
+    <span class="hicons">
+      <button class="hicon" data-nav="omplanera" aria-label="Till omplanering">${ICO.cal}</button>
+      <button class="hicon" data-nav="installningar" aria-label="Till inställningar">${ICO.user}</button>
+    </span></header>`);
+
+  planHero(h);
   questionCards(h);
   warnStep(h);
+  confirmSection(h);
 
-  if (S.mq.length) {
-    h.push(`<section class="confirm"><div class="eyebrow">Att bekräfta · ${S.mq.length}</div>`);
-    for (const q of S.mq) {
-      const a = actById(q.activityId), s = findSess(q.sessionId);
-      if (!a || !s) continue;
-      h.push(`<div class="qrow">
-        <div class="qtext"><b>${esc(a.name || SPORTLABEL[s.sport] || "Aktivitet")}</b>
-          <span class="dim">${esc(matchDate(a.start_date_local) ?? "")} · ${Math.round(a.moving_time / 60)} min</span>
-          <span class="qvs">→ ${esc(s.title ?? s.id)}?</span></div>
-        <div class="qacts"><button data-link="${esc(q.sessionId)}|${a.id}|${q.score}">Länka</button>
-        <button class="ghostbtn" data-nolink="${esc(q.sessionId)}|${a.id}">Nej</button></div>
-      </div>`);
-    }
-    h.push(`</section>`);
-  }
-
-  if (S.tapMove) h.push(`<div class="banner sticky">Tryck på en dag för <b>${esc(S.tapMove.title ?? S.tapMove.id)}</b>
-    <button class="txtbtn" data-cancel="1">Avbryt</button></div>`);
-
-  /* U5 (0.17.1): passerade veckor hopfällda — Plan öppnar på nu */
+  /* U5 (0.17.1): passerade veckor hopfällda — semantiken låst i fixturer */
   const past = pastSummary(S.plan, S.overlay, today());
   if (past) h.push(`<button class="pastfold${S.pastOpen ? " open" : ""}" data-pastopen>
     <span>✓ ${past.weeks.length} avklarad${past.weeks.length === 1 ? " vecka" : "e veckor"} · ${past.done}/${past.total} pass</span>
     <span class="chev">${S.pastOpen ? "Dölj" : "Visa"}</span></button>`);
 
   let firstShown = true;
-  for (const [wi, wk] of weeks.entries()) {
+  for (const wk of weeks) {
+    if (past && !S.pastOpen && past.weeks.includes(wk)) continue;
+    const v = weekView(S.plan, S.overlay, wk);
+    const sum = v.summary;
+    const live = [...v.days.flatMap(d => d.sessions), ...v.unplaced]
+      .filter(s => s.status !== "struck" && s.prio !== "C");           /* samma formel som pastSummary */
+    const done = live.filter(s => s.status === "done").length;
+    h.push(`<section class="wk" id="wk-${wk}">
+      <header class="wkhead">
+        <div class="wkrow">
+          <h1>Vecka ${wk}</h1>
+          <span class="wkdates">${shortDate(v.days[0].date)} – ${shortDate(v.days[6].date)}</span>
+          <span class="wktype">${esc(v.week?.type === "normal" ? "" : v.week?.type ?? "")}</span>
+        </div>
+        ${v.week?.focus ? `<p class="focus">${esc(v.week.focus)}</p>` : ""}
+        <div class="sums">
+          <span class="compl"><b>${done}</b> av ${live.length} pass utförda</span>
+          <span><b>${Math.round(sum.minutes / 6) / 10}</b> h</span>
+          ${sum.lowShare != null ? `<span><b>${Math.round(sum.lowShare * 100)} %</b> lågintensivt</span>` : ""}
+          ${sum.struck ? `<span class="dim">${sum.struck} struket</span>` : ""}
+        </div>
+        ${sum.minutes ? `<div class="wkzone">${zstrip(sum.zones.map((m, z) => [z + 1, m]).filter(p => p[1] > 0), true)}
+          ${firstShown ? `<span class="legend">ljusare = hårdare</span>` : ""}</div>` : ""}
+      </header>`);
+    firstShown = false;
+
+    for (const d of v.days) {
+      if (!d.sessions.length) continue;                    /* överblicken visar träning, inte tomrum */
+      h.push(`<div class="cday${d.date === today() ? " today" : ""}">
+        <div class="dhead"><span class="dname">${d.label}</span><span class="ddate">${shortDate(d.date)}</span></div>
+        ${d.sessions.map(compactRow).join("")}
+      </div>`);
+    }
+    if (v.unplaced.length) h.push(`<div class="cday">
+      <div class="dhead"><span class="dname">Att placera</span><span class="ddate">${v.unplaced.length}</span></div>
+      ${v.unplaced.map(compactRow).join("")}
+    </div>`);
+    h.push(`</section>`);
+  }
+
+  modesSection(h);
+  offplanSection(h);
+  h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
+}
+
+/* ---------- Omplanera (U3, 0.18): gamla Plan-vyn, oförändrad interaktion ----------
+   Drag & drop, tryckplacering, dagmål, Att placera-menyn. Nås via
+   kalendersymbolen i Plan. Ingen ny logik — bara ny adress. */
+function renderOmplanera(h) {
+  const weeks = planWeeks(S.plan);
+
+  h.push(`<header class="viewhead"><button class="hicon backbtn" data-nav="plan" aria-label="Tillbaka till planen">‹</button>
+    <h1>Omplanera</h1>
+    <span class="hicons">
+      <button class="hicon" data-nav="installningar" aria-label="Till inställningar">${ICO.user}</button>
+    </span></header>
+    <p class="hint">Tryck på ett pass för att flytta eller justera. Motorn varnar — du bestämmer.</p>`);
+
+  if (S.tapMove) h.push(`<div class="banner sticky">Tryck på en dag för <b>${esc(S.tapMove.title ?? S.tapMove.id)}</b>
+    <button class="txtbtn" data-cancel="1">Avbryt</button></div>`);
+
+  const past = pastSummary(S.plan, S.overlay, today());
+  if (past) h.push(`<button class="pastfold${S.pastOpen ? " open" : ""}" data-pastopen>
+    <span>✓ ${past.weeks.length} avklarad${past.weeks.length === 1 ? " vecka" : "e veckor"} · ${past.done}/${past.total} pass</span>
+    <span class="chev">${S.pastOpen ? "Dölj" : "Visa"}</span></button>`);
+
+  for (const wk of weeks) {
     if (past && !S.pastOpen && past.weeks.includes(wk)) continue;
     const v = weekView(S.plan, S.overlay, wk);
     const sum = v.summary;
@@ -340,20 +452,12 @@ function renderPlan(h) {
           <span class="wkdates">${shortDate(v.days[0].date)} – ${shortDate(v.days[6].date)}</span>
           <span class="wktype">${esc(v.week?.type === "normal" ? "" : v.week?.type ?? "")}</span>
         </div>
-        ${v.week?.focus ? `<p class="focus">${esc(v.week.focus)}</p>` : ""}
         <div class="sums">
           <span><b>${sum.planned}</b> pass</span>
           <span><b>${Math.round(sum.minutes / 6) / 10}</b> h</span>
-          ${sum.lowShare != null ? `<span><b>${Math.round(sum.lowShare * 100)} %</b> lågintensivt</span>` : ""}
           ${sum.struck ? `<span class="dim">${sum.struck} struket</span>` : ""}
-          ${(() => { const live = v.days.flatMap(d => d.sessions).filter(s => s.status !== "struck" && s.prio !== "C");
-             const done = live.filter(s => s.status === "done").length;
-             return done ? `<span class="compl"><b>${done}</b> av ${live.length} utförda</span>` : ""; })()}
         </div>
-        ${sum.minutes ? `<div class="wkzone">${zstrip(sum.zones.map((m, z) => [z + 1, m]).filter(p => p[1] > 0), true)}
-          ${firstShown ? `<span class="legend">ljusare = hårdare</span>` : ""}</div>` : ""}
       </header>`);
-    firstShown = false;
 
     for (const d of v.days) {
       const trainday = true;
@@ -373,7 +477,6 @@ function renderPlan(h) {
     h.push(`</section>`);
   }
 
-  offplanSection(h);
   h.push(`<button class="fab" data-today aria-label="Till aktuell vecka">Idag</button>`);
 }
 
@@ -1181,7 +1284,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-order],[data-pastopen],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
+    const t = ev.target.closest("[data-act],[data-order],[data-pastopen],[data-briefopen],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -1366,6 +1469,7 @@ function wire() {
       render(); return;
     }
     if (t.dataset.pastopen != null) { S.pastOpen = !S.pastOpen; render(); return; }
+    if (t.dataset.briefopen != null) { S.briefOpen = !S.briefOpen; render(); return; }
     if (t.dataset.order != null) {        /* B6: komponeras här, skrivs aldrig till lagring */
       const json = JSON.stringify(orderExport({ cfg: S.cfg, plan: S.plan,
                                                 athlete: S.athlete, now: now() }), null, 2);
@@ -1422,7 +1526,8 @@ function wire() {
     }
     else if (t.dataset.act) {
       const act = t.dataset.act, id = S.sel;
-      if (act === "move") { S.tapMove = findSess(id); S.sel = null; }
+      if (act === "move") { S.tapMove = findSess(id); S.sel = null;
+        if (S.view === "plan") S.view = "omplanera"; }     /* U3: dagmålen bor i Omplanera */
       else if (act === "close") { S.sel = null; }
       else { save(manualAdjust(S.plan, S.overlay, id, act, {}, now()),
                   act === "strike" ? "Struket." : act === "restore" ? "Strykningen hävd." : "Tillbaka i menyn.");

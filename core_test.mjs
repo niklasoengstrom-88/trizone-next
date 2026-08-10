@@ -1972,10 +1972,44 @@ import { pastSummary } from "./core.js";
   ok(pastSummary({ weeks: [], sessions: [] }, {}, "2026-10-19") === null,
      "U5: tom plan ger null, inte en tom sammanfattning"); }
 
+/* ---------- buildPosition (0.18, planhero) ----------
+   "% av bygget" och "vecka X av Y" är aritmetik på block.start + weeks —
+   aldrig gissning, aldrig krasch. Referensblocket: start 2026-10-12, 3 veckor. */
+import { buildPosition } from "./core.js";
+{ ok(buildPosition(plan, "2026-10-12")?.state === "in", "bp: blockets första dag är inne");
+  eq(buildPosition(plan, "2026-10-12").pct, 0, "bp: dag 1 = 0 % — inget avklarat före idag");
+  eq([buildPosition(plan, "2026-10-12").weekInBlock, buildPosition(plan, "2026-10-12").buildWeek],
+     [1, 1], "bp: dag 1 ⇒ vecka 1 av blocket och av bygget");
+  const mid = buildPosition(plan, "2026-10-26");             /* mån vecka 3 */
+  eq([mid.weekInBlock, mid.pct], [3, Math.round(14/21*100)], "bp: v3 dag 1 ⇒ 14 av 21 dagar avklarade");
+  const sun = buildPosition(plan, "2026-11-01");             /* sista söndagen */
+  eq([sun.state, sun.pct], ["in", Math.round(20/21*100)], "bp: sista dagen är fortfarande inne, inte klar");
+  eq(buildPosition(plan, "2026-11-02").state, "after", "bp: dagen efter blockslut ⇒ after");
+  eq(buildPosition(plan, "2026-11-02").pct, 100, "bp: efter slutet är bygget 100 %");
+  eq(buildPosition(plan, "2026-10-11").state, "before", "bp: dagen före start ⇒ before");
+  eq(buildPosition(plan, "2026-10-11").pct, 0, "bp: före start 0 % — pinnen står vid noll");
+  ok(buildPosition(plan, "2026-10-15").bands[0].state === "cur", "bp: bandet vet vilket block som är nu");
+  ok(buildPosition({ blocks: [] }, "2026-10-15") === null, "bp: utan block inget påstående, ingen krasch");
+  ok(buildPosition(plan, "trasigt") === null, "bp: trasigt datum ⇒ null, aldrig NaN");
+  ok(buildPosition(plan, "2026-10-15").totalWeeks === 3, "bp: byggets veckotal summeras ur blocken"); }
+{ /* flera block + glapp: passerade räknas, glappet påstår inget block */
+  const two = { blocks: [
+    { id: "a", label: "Bas", start: "2026-10-12", weeks: 2 },
+    { id: "b", label: "Build", start: "2026-11-02", weeks: 2 } ] };   /* glapp v.44 */
+  const inB = buildPosition(two, "2026-11-09");              /* mån vecka 2 i b */
+  eq([inB.block.id, inB.weekInBlock, inB.buildWeek], ["b", 2, 4],
+     "bp: byggveckan ackumulerar över blockgränsen");
+  eq(inB.pct, Math.round(21/28*100), "bp: procent räknar bara blockdagar — glappet är inte bygge");
+  const gap = buildPosition(two, "2026-10-28");
+  eq([gap.state, gap.block, gap.weekInBlock], ["gap", null, null],
+     "bp: i glappet påstås inget block och ingen vecka");
+  eq(gap.pct, 50, "bp: glappet bär de passerade blockens procent");
+  eq(gap.bands.map(x => x.state), ["past", "future"], "bp: banden vet var vi står runt glappet"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 692;
+const EXPECTED_MIN = 718;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
