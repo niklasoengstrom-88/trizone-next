@@ -17,7 +17,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks, week
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
          orderExport, blockForDate, pastSummary, buildPosition } from "./core.js";
 
-export const UI_BUILD = "next-0.18.2 · 2026-08-10";
+export const UI_BUILD = "next-0.18.3 · 2026-08-10";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,

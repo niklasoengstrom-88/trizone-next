@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.18.2 · 2026-08-10
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.18.3 · 2026-08-10
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -46,7 +46,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.18.2 · 2026-08-10" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.18.3 · 2026-08-10" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -332,7 +332,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.18.2 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.18.3 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -829,9 +829,20 @@ globalThis.__TZ_TODAY = "2026-10-15";                /* ÅTERSTÄLLD */
 clickBtn({ nav: "idag" }); clickBtn({ nav: "plan" });
 ok(!els.app.innerHTML.includes("avklarad"), "U5: tiden återställd — sviten lämnar rent efter sig");
 
+/* ---------- Toast över flikraden (S25-fyndet, 0.18.3) ----------
+   CSS-läget vaktas som text, samma grepp som sw-cachevakten: toastens
+   z-index ska vara högre än flikradens, och dess bottom-offset ska rymma
+   flikradens höjd. Annars klipps varje kvittens bakom kromet. */
+{ const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  const zToast = Number((css.match(/\.toast\{[^}]*z-index:(\d+)/s) ?? [])[1]);
+  const zTabs  = Number((css.match(/\.tabs\{[^}]*z-index:(\d+)/s) ?? [])[1]);
+  ok(zToast > zTabs, `toasten ligger ÖVER flikraden i z-ordning (${zToast} > ${zTabs})`);
+  const off = Number((css.match(/\.toast\{[^}]*bottom:calc\((\d+)px/s) ?? [])[1]);
+  ok(off >= 72, `toastens bottom-offset (${off}px) rymmer flikradens höjd — kvittensen klipps aldrig`); }
+
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 307;
+const EXPECTED_MIN = 309;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
