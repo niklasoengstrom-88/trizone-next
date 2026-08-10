@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.16.0 · 2026-08-06
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.17.0 · 2026-08-10
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -45,7 +45,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.16.0 · 2026-08-06" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.17.0 · 2026-08-10" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -331,7 +331,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.16.0 · 2026-08-06", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.17.0 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -477,6 +477,28 @@ has(els.app.innerHTML, "impbox", "importpanelen öppnas");
 els.impbox = { value: clipped };
 fire("click", { target: target({ importGo: "" }, ["data-import-go"]) });
 has(els.app.innerHTML, "Importerad", "rundturen export → import fungerar i vyn");
+
+/* ---------- 0.17.0: Beställningsexport (B6) ---------- */
+has(els.app.innerHTML, "Kopiera beställningsexport", "beställningsexporten bor i Inställningar");
+clipped = null;
+fire("click", { target: target({ order: "" }, ["data-order"]) });
+await new Promise(r => setTimeout(r, 10));
+{ const ord = JSON.parse(clipped);
+  ok(ord.kind === "trizone-next-bestallning", "beställningen hamnar i urklipp med eget kind-fält");
+  ok(ord.protected.some(p => p.id === "sk-w42-str-core"),
+     "protected-listan bär skyddspasset ur planen");
+  ok(!clipped.includes("reason") && !clipped.includes("stressfraktur"),
+     "SMOKE B6: reason förekommer aldrig i det som når urklippet");
+  ok(ord.engine.lowShareTarget != null && typeof ord.benchmarks === "object",
+     "motorvärden och benchmarks följer med");
+  ok(![...mem.values()].some(v => String(v).includes("trizone-next-bestallning")),
+     "beställningen lagras ALDRIG — komponeras på begäran och lämnar inga spår"); }
+
+/* ---------- 0.17.0: Fasbriefing (B1) i Plan ---------- */
+clickBtn({ nav: "plan" });
+has(els.app.innerHTML, "Skelettblocket bygger vanan", "fasbriefingen renderas i Plan, kvarliggande hela fasen");
+has(els.app.innerHTML, "Fas · Skelettblock", "briefen bär blockets etikett som eyebrow");
+has(els.app.innerHTML, 'class="phasebrief"', "briefen är en ramlös sektion (L1), inte ett kort");
 
 /* ================================================================
    FAS B — anslutning, hämtning, fallback, wellness (0.10.0)
@@ -742,7 +764,7 @@ has(els.app.innerHTML, "read-only", "efter rensning faller källan tillbaka på 
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 263;
+const EXPECTED_MIN = 272;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

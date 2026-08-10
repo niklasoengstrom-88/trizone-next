@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.16.0 · 2026-08-06";
+export const BUILD = "next-0.17.0 · 2026-08-10";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -97,6 +97,17 @@ export function validatePlan(plan) {
        frånvaro betyder att profilens värde gäller. Speglar ENGINE_FIELDS 50–95 %. */
     if (b.lowShare != null && !(typeof b.lowShare === "number" && b.lowShare >= 0.5 && b.lowShare <= 0.95))
       E(p, `ogiltigt fasmål lowShare: ${JSON.stringify(b.lowShare)} (väntat andel 0.5–0.95, eller uteslutet)`);
+    /* Fasbriefing (B1/B3): ~5 meningar, synlig hela fasen. Tak 1200 tecken. */
+    if (b.text !== undefined) {
+      if (typeof b.text !== "object" || b.text === null || Array.isArray(b.text))
+        E(p, `text måste vara ett objekt: ${JSON.stringify(b.text)}`);
+      else if (b.text.brief !== undefined) {
+        if (typeof b.text.brief !== "string" || !b.text.brief.trim())
+          E(p, "fasbriefing text.brief måste vara icke-tom text");
+        else if (b.text.brief.length > 1200)
+          E(p, `fasbriefing för lång: ${b.text.brief.length} tecken (tak 1200 — ~5 meningar, B3)`);
+      }
+    }
   });
 
   const weeks = plan.weeks ?? [];
@@ -859,7 +870,13 @@ const kB = n => (n / 1024).toFixed(n < 10240 ? 1 : 0) + " kB";
 const pick = (o, keys) => { const r = {}; for (const k of keys) if (o?.[k] !== undefined) r[k] = o[k]; return r; };
 export function trimPlan(plan) {
   const p = pick(plan, ["formatVersion", "planVersion", "generated", "athlete", "anchor"]);
-  p.blocks   = (plan.blocks   ?? []).map(b => pick(b, ["id", "label", "start", "weeks"]));
+  /* Regression 2026-08-10: lowShare (beslut A) ströks här och försvann tyst
+     ur offline-projektionen. Vitlistan bär numera all beslutad blockdata. */
+  p.blocks   = (plan.blocks   ?? []).map(b => {
+    const t = pick(b, ["id", "label", "start", "weeks", "lowShare"]);
+    if (typeof b.text?.brief === "string") t.text = { brief: b.text.brief };
+    return t;
+  });
   p.weeks    = (plan.weeks    ?? []).map(w => pick(w, ["week", "iso", "block", "type", "focus"]));
   p.sessions = (plan.sessions ?? []).map(s => {
     const t = pick(s, ["id", "week", "day", "slot", "sport", "prio", "protected",
@@ -1556,6 +1573,37 @@ export function backupExport(overlay, planVersion, now = "", cfg = null) {
     if (b.cfg.conn) b.cfg.conn = { ...b.cfg.conn, apiKey: "" };
   }
   return b;
+}
+
+/* ---------- Beställningsexport (B6, PLANLEVERANS v2.1 §2) ----------
+   Komponeras PÅ BEGÄRAN och lagras aldrig. Ger coachdialogen aktiva
+   bindningar, protected-lista, motorvärden och benchmarks inför plan-
+   leverans — utan att en ny coachtråd behöver trådminne.
+   INTEGRITETSLAG: `reason` är hälsodata (spec 1 §5b) och FILTRERAS I KODEN.
+   Implementerat som VITLISTA — endast rule / sport / substitute.{quality,easy}
+   passerar. Okända fält kan bära hälsodata och släpps därför aldrig igenom,
+   oavsett vad de heter. Fixturen i core_test bevisar att reason aldrig läcker. */
+export function orderExport({ cfg = {}, plan = null, athlete = null, now = "" } = {}) {
+  const bindings = (Array.isArray(cfg.rules) ? cfg.rules : [])
+    .filter(r => r && typeof r.rule === "string")
+    .map(r => {
+      const o = { rule: r.rule };
+      if (r.sport !== undefined) o.sport = [].concat(r.sport);
+      const sub = pick(r.substitute ?? {}, ["quality", "easy"]);
+      if (Object.keys(sub).length) o.substitute = sub;
+      return o;
+    });
+  const engine = {};
+  for (const k of Object.keys(ENGINE_FIELDS))
+    engine[k] = (cfg.engine ?? {})[k] ?? ENGINE[k];
+  const prot = (plan?.sessions ?? [])
+    .filter(s => s.protected === true)
+    .map(s => pick(s, ["id", "title", "sport", "prio"]));
+  const benchmarks = Object.fromEntries(
+    Object.entries(benchmarksOf(athlete)).filter(([, v]) => v != null));
+  return { kind: "trizone-next-bestallning", formatVersion: FORMAT_VERSION,
+           exported: now, athlete: cfg.athlete ?? plan?.athlete ?? null,
+           bindings, protected: prot, engine, benchmarks };
 }
 
 export function backupImport(raw, plan, now = "") {

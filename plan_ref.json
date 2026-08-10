@@ -12,7 +12,10 @@
       "label": "Skelettblock",
       "start": "2026-10-12",
       "weeks": 3,
-      "lowShare": 0.75
+      "lowShare": 0.75,
+      "text": {
+        "brief": "Skelettblocket bygger vanan: tre veckor där passen är enkla men ceremonin är allvar. Volymen är låg med avsikt — det som testas är flödet från plan till utfall, inte benen. När blocket fungerar känns veckan självklar redan på måndagen."
+      }
     }
   ],
   "weeks": [

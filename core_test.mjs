@@ -1858,10 +1858,95 @@ import { dailyLoads, dayShift } from "./core.js";
   eq(dailyLoads(acts, "trasigt", 7).length, 0, "dailyLoads: ogiltigt datum ger inget påstående");
   eq(dayShift("2026-10-15", -7), "2026-10-08", "dayShift: exporterad och korrekt"); }
 
+/* ================================================================
+   0.17.0 — trimPlan-regression · fasbriefing (B1) · beställningsexport (B6)
+   ================================================================ */
+import { orderExport } from "./core.js";
+
+/* ---------- REGRESSION 2026-08-10: trimPlan strök blocks[].lowShare ----------
+   plan.json är network-first; offline laddas den trimmade projektionen ur
+   trizone.plan.v1 — och fasmålet från beslut A försvann tyst ur den. Polarization
+   föll tillbaka på profilvärdet utan spår. Vitlistan måste bära beslut A:s data,
+   liksom fasbriefingen (B1) som annars hade mött samma öde. */
+{ const src = structuredClone(plan);
+  src.blocks[0].text = { brief: "Fasens uppgift i fem meningar.", hemligt: "läcker ej" };
+  src.blocks[0].skrap = "bort";
+  const t = trimPlan(src);
+  eq(t.blocks[0].lowShare, 0.75, "REGRESSION 0.17.0: trimPlan behåller blocks[].lowShare");
+  eq(t.blocks[0].text, { brief: "Fasens uppgift i fem meningar." },
+     "trimPlan: fasbriefingen överlever trimning, okända textfält gör det inte");
+  ok(t.blocks[0].skrap === undefined, "trimPlan: okända blockfält trimmas fortfarande");
+  const bare = structuredClone(plan);
+  delete bare.blocks[0].lowShare;
+  delete bare.blocks[0].text;
+  const tb = trimPlan(bare);
+  ok(tb.blocks[0].lowShare === undefined, "trimPlan: frånvarande lowShare hittas inte på");
+  ok(tb.blocks[0].text === undefined, "trimPlan: block utan text får inget tomt text-objekt"); }
+
+/* ---------- Fasbriefing: validering (B1/B3 — typ och rimlig längd) ---------- */
+{ const mk = (text) => ({ formatVersion: 1, planVersion: "2026-08-10.1",
+    blocks: [{ id: "b", label: "B", start: "2026-09-07", weeks: 2,
+               ...(text !== undefined ? { text } : {}) }],
+    weeks: [{ week: 37, iso: "2026-W37", block: "b", type: "normal" }],
+    sessions: [{ id: "bw1-run-e", week: 37, sport: "run", prio: "B", title: "Lugn löpning",
+                 durationMin: 40, profile: [[1, 40]] }] });
+  ok(validatePlan(mk(undefined)).ok, "fasbriefing: block utan text är giltigt");
+  ok(validatePlan(mk({ brief: "Fasens uppgift." })).ok, "fasbriefing: giltig brief passerar");
+  ok(validatePlan(mk({})).ok, "fasbriefing: text utan brief är giltigt");
+  ok(!validatePlan(mk("hej")).ok, "fasbriefing: text som sträng avvisas — objekt väntat");
+  ok(!validatePlan(mk({ brief: 7 })).ok, "fasbriefing: brief som tal avvisas");
+  ok(!validatePlan(mk({ brief: "   " })).ok, "fasbriefing: tom brief avvisas");
+  ok(!validatePlan(mk({ brief: "x".repeat(1201) })).ok, "fasbriefing: över 1200 tecken avvisas");
+  ok(validatePlan(mk({ brief: "x".repeat(1200) })).ok, "fasbriefing: exakt 1200 tecken är taket");
+  const e = validatePlan(mk({ brief: "x".repeat(1201) })).errors[0];
+  ok(/1201/.test(e.msg) && /1200/.test(e.msg), "fasbriefing: felet pekar på längden och taket (rotorsak)"); }
+
+/* ---------- B6: beställningsexport — reason läcker ALDRIG ----------
+   Vitlista, inte svartlista: endast rule/sport/substitute.{quality,easy}
+   passerar. Okända fält kan bära hälsodata och släpps aldrig igenom.
+   Komponeras på begäran, lagras aldrig (verifieras i UI-röken). */
+{ const cfg = { athlete: "niklas",
+    engine: { lowShareTarget: 0.80, volumeCapPct: 120 },
+    rules: [
+      { rule: "tissue-freeze", sport: ["run"],
+        substitute: { quality: "bike", easy: "swim", reason: "nästlad läcka" },
+        reason: "stressfrakturhistorik vänster fot",
+        anteckning: "okänt fält med hälsodata" },
+      { rule: "sleep-guard" },
+      { sport: ["swim"], reason: "utan rule — exporteras inte alls" } ] };
+  const athlete = { sports: { bike: { ftp: 262, lthr: 166 },
+                              run:  { lthr: 173, thresholdPace: 2.965 } } };
+  const o = orderExport({ cfg, plan, athlete, now: "2026-08-10T12:00:00" });
+  eq(o.kind, "trizone-next-bestallning", "B6: eget kind-fält skiljer den från backupen");
+  eq(o.exported, "2026-08-10T12:00:00", "B6: deterministisk — tiden kommer utifrån");
+  const json = JSON.stringify(o);
+  ok(!json.includes("stressfraktur") && !json.includes("nästlad") && !json.includes("hälsodata")
+     && !json.includes("reason"),
+     "B6-FIXTUR: reason läcker aldrig — varken på rotnivå, nästlat eller i okända fält");
+  eq(o.bindings, [{ rule: "tissue-freeze", sport: ["run"],
+                    substitute: { quality: "bike", easy: "swim" } },
+                  { rule: "sleep-guard" }],
+     "B6: rule/sport/substitute passerar; bindning utan rule utgår");
+  eq(o.protected, [{ id: "sk-w42-str-core", title: "Styrka: höft och bål",
+                     sport: "strength", prio: "B" }],
+     "B6: protected-listan hämtas ur planen (hälsoneutrala titlar, F2)");
+  eq(o.engine.lowShareTarget, 0.80, "B6 motorvärden: cfg-överstyrning vinner");
+  eq(o.engine.volumeCapPct, 120, "B6 motorvärden: andra överstyrningen också");
+  eq(o.engine.comebackCount, 2, "B6 motorvärden: ENGINE-default fyller resten");
+  ok(!("driftPct" in o.engine) && !("slotHour" in o.engine),
+     "B6: endast redigerbara motorvärden (ENGINE_FIELDS) — kodkonstanter är kod, inte profil");
+  eq(o.benchmarks, { ftp: 262, bikeLthr: 166, runLthr: 173, runThreshold: "5:37/km" },
+     "B6 benchmarks: null-fält utelämnas (ingen CSS satt här)");
+  const tomt = orderExport({ now: "t" });
+  eq([tomt.bindings, tomt.protected, tomt.benchmarks], [[], [], {}],
+     "B6: tom indata ger välformad tom export, kraschar aldrig");
+  eq(tomt.engine.lowShareTarget, 0.78, "B6: tom cfg ger ENGINE-defaults");
+  ok(o.athlete === "niklas", "B6: atletreferens följer med (inga persondata)"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 665;
+const EXPECTED_MIN = 692;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

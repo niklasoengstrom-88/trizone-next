@@ -14,9 +14,10 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks,
          pickActivitySource, zoneParityFull, recovery, wellnessFlags,
          emptyCache, V32_CACHE_KEY, statusGrid, pmcStatus, effTrend, zoneBand, dailyLoads, dayShift,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
-         ENGINE_FIELDS, ENGINE, athleteGuard, isQuality } from "./core.js";
+         ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
+         orderExport, blockForDate } from "./core.js";
 
-export const UI_BUILD = "next-0.16.0 · 2026-08-06";
+export const UI_BUILD = "next-0.17.0 · 2026-08-10";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -281,6 +282,14 @@ function renderPlan(h) {
     <span class="hicons">
       <button class="hicon" data-nav="installningar" aria-label="Till inställningar">${ICO.user}</button>
     </span></header>`);
+
+  /* Fasbriefing (B1): innevarande blocks brief, kvarliggande hela fasen.
+     Ramlös sektion (L1), textkanalen (serif, S3). 0.18 flyttar den in i planheron. */
+  const curBlock = blockForDate(S.plan, today());
+  if (curBlock?.text?.brief) h.push(`<section class="phasebrief">
+    <div class="eyebrow">Fas · ${esc(curBlock.label ?? curBlock.id)}</div>
+    <p class="brief">${esc(curBlock.text.brief)}</p>
+  </section>`);
 
   h.push(`<section class="modes"><div class="eyebrow">Läget</div>
     <div class="chiprow">${Object.entries(LIFE_MODES).map(([rule, m]) => {
@@ -731,6 +740,13 @@ function renderSettings(h) {
       <label class="filelbl">Välj fil…<input type="file" id="impfile" accept=".json,application/json" style="display:none"></label></div>` : ""}
   </section>`);
 
+  /* B6: beställningsexporten — komponeras vid tryck, lagras aldrig */
+  h.push(`<section class="setsec"><div class="eyebrow">Beställning till coachen</div>
+    <div class="acts"><button data-order>Kopiera beställningsexport</button></div>
+    <p class="hint">Aktiva bindningar, skyddade pass, motorvärden och benchmarks — underlaget för
+      nästa planleverans. Orsakstexter följer aldrig med; de är dina.</p>
+  </section>`);
+
   h.push(`<section class="setsec"><div class="eyebrow">Bygge</div>
     <div class="kv">${S.parity.map(r => `<span class="k">${esc(r.k)}</span><span class="v ${r.cls}">${esc(r.val)}</span>`).join("")}</div>
     <div class="acts" style="margin-top:10px"><button class="ghostbtn" data-buzztest>Testa vibration</button></div>
@@ -1156,7 +1172,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
+    const t = ev.target.closest("[data-act],[data-order],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -1339,6 +1355,14 @@ function wire() {
         S.note = { text: `Fil skapad (${(json.length / 1024).toFixed(1)} kB) — spara den utanför telefonen.` };
       } catch (e) { S.note = { text: "Nedladdning misslyckades: " + e.message, bad: true }; }
       render(); return;
+    }
+    if (t.dataset.order != null) {        /* B6: komponeras här, skrivs aldrig till lagring */
+      const json = JSON.stringify(orderExport({ cfg: S.cfg, plan: S.plan,
+                                                athlete: S.athlete, now: now() }), null, 2);
+      (navigator.clipboard?.writeText(json) ?? Promise.reject())
+        .then(() => { S.note = { text: `Beställningsexport i urklipp (${(json.length/1024).toFixed(1)} kB). Klistra in i coachdialogen tillsammans med PLANLEVERANS.` }; render(); })
+        .catch(() => { S.note = { text: "Urklipp nekades — exporten kunde inte kopieras.", bad: true }; render(); });
+      return;
     }
     if (t.dataset.backup != null) {
       const json = JSON.stringify(backupExport(S.overlay, S.plan.planVersion, now(), S.cfg));
