@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.18.1 · 2026-08-10
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.18.2 · 2026-08-10
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -41,11 +41,12 @@ const mem = new Map([
     moving_time: 30 * 60, distance: 1500 }
 ] } })]]);
 globalThis.window = { innerHeight: 2200, scrollBy() {},
+  scrollTop: 0, scrollTo(x, y) { globalThis.window.scrollTop = y; },
   localStorage: { get length() { return mem.size; }, key: i => [...mem.keys()][i],
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.18.1 · 2026-08-10" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.18.2 · 2026-08-10" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -331,7 +332,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.18.1 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.18.2 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -353,6 +354,15 @@ has(els.app.innerHTML, "forsvunnet-pass-1", "den föräldralösa posten visas me
      "arkivering flyttar posten och sparas");
   ok(!els.app.innerHTML.includes("Föräldralösa"), "tömd lista försvinner ur vyn"); }
 clickBtn({ nav: "plan" });
+
+/* ---------- Skrolläget följer inte med vid vyväxling (S25-fyndet, 0.18.2) ---------- */
+{ globalThis.window.scrollTop = 1400;                /* nedskrollad i Plan */
+  clickBtn({ nav: "analys" });
+  ok(globalThis.window.scrollTop === 0, "vyväxling börjar överst — skrollen nollställs");
+  globalThis.window.scrollTop = 900;
+  clickBtn({ nav: "omplanera" });
+  ok(globalThis.window.scrollTop === 0, "…även till undervyn Omplanera");
+  clickBtn({ nav: "plan" }); }
 
 /* ---------- Överblicken (0.18.1): BARA innevarande vecka ---------- */
 has(els.app.innerHTML, "Denna vecka · v.42", "innevarande vecka pekas ut (demo bild 2)");
@@ -821,7 +831,7 @@ ok(!els.app.innerHTML.includes("avklarad"), "U5: tiden återställd — sviten l
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 305;
+const EXPECTED_MIN = 307;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

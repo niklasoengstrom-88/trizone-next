@@ -17,7 +17,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks, week
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
          orderExport, blockForDate, pastSummary, buildPosition } from "./core.js";
 
-export const UI_BUILD = "next-0.18.1 · 2026-08-10";
+export const UI_BUILD = "next-0.18.2 · 2026-08-10";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -1471,7 +1471,9 @@ function wire() {
       save(unlogResult(S.overlay, t.dataset.unlog, now()), "Loggningen ångrad.");
       render(); return;
     }
-    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; S.selDay = null; S.logOpen = null; S.adjOpen = null; S.histOpen = null; render(); return; }
+    if (t.dataset.nav) { S.view = t.dataset.nav; S.sel = null; S.tapMove = null; S.selDay = null; S.logOpen = null; S.adjOpen = null; S.histOpen = null; render();
+      window.scrollTo?.(0, 0);                             /* ny vy börjar överst (0.18.2) */
+      return; }
     if (t.dataset.orphan) {
       const [id, decision] = t.dataset.orphan.split("|");
       S.overlay = resolveOrphan(S.overlay, id, decision, now());
