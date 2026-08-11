@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.19.1 · 2026-08-11";
+export const BUILD = "next-0.19.2 · 2026-08-11";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -432,13 +432,14 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
      missed rör dem aldrig — sjukdom och missed svarar med dialog-uppmaning. */
   const raceWeeks = new Set((plan.weeks ?? []).filter(w => w.type === "race").map(w => w.week));
   const inRaceWeek = s => raceWeeks.has(s.week);
-  const coachWarn = (rule, s, why) => push(rule, 1, s.id, "warn", why, {}, {});
+  const coachWarn = (rule, s, why) =>
+    push(rule, 1, s.id, "warn", why, {}, {}, { standing: true });   /* 0.19.2 */
 
   const push = (rule, level, id, action, why, payload = {}, orig = {}, extra = {}) => {
     /* H4 vaktar automatiska triggers. Användarstyrda lägen (modeKey) är redan
        bekräftade — spärra dem inte, annars dör ett omaktiverat läge samma dygn
        (0.9.0-buggen: på/av/på ⇒ tyst dött läge). */
-    if (id && !extra.modeKey && firedToday(rule, id)) return false;
+    if (id && !extra.modeKey && !extra.standing && firedToday(rule, id)) return false;
     actions.push({ rule, level, session: id, action, why, payload, orig, t: now, ...extra });
     return true;
   };
@@ -728,6 +729,9 @@ export function applyActions(overlay, actions) {
         sn[a.session] = structuredClone(rest);
       }
     }
+    if (a.action === "warn" && a.standing) continue;   /* 0.19.2: stående varning
+      återutvärderas per körning och loggas aldrig — annars spammas historiken
+      och H4 dödar den. Lägesaktiveringen är redan spårad i modes.log. */
     switch (a.action) {
       case "strike":     so.status = "struck"; break;
       case "move":       so.moved = { week: a.payload.week, day: a.payload.day, slot: a.payload.slot }; break;
@@ -2384,6 +2388,19 @@ export function clearDayFlag(overlay, flag, date, now = "") {
 
 export const dayFlagActive = (overlay, flag, todayISO) =>
   (overlay?.modes?.dayflags ?? []).some(f => f.flag === flag && f.date === todayISO);
+
+/* Aggregering för varningstrappan (0.19.2): identiska (regel, varför) faller
+   ihop till en rad — fem pass med samma uppmaning är EN uppmaning, inte brus. */
+export function groupWarns(warns) {
+  const out = [], ix = new Map();
+  for (const w of warns ?? []) {
+    const k = w.rule + "|" + w.why;
+    if (ix.has(k)) { const g = out[ix.get(k)]; g.n++; g.sessions.push(w.session); }
+    else { ix.set(k, out.length);
+           out.push({ rule: w.rule, why: w.why, n: 1, sessions: [w.session] }); }
+  }
+  return out;
+}
 
 /* Motorflaggor ur dygnsflaggorna. Datumet utvärderas VID VARJE anrop:
    en flagga satt igår är inert idag, oavsett hur länge appen stått öppen. */

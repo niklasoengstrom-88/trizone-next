@@ -1,5 +1,5 @@
-/* TRIZONE Next — sw.js · BUILD next-0.19.1 · 2026-08-11 */
-const CACHE = "trizone-next-0.19.1";
+/* TRIZONE Next — sw.js · BUILD next-0.19.2 · 2026-08-11 */
+const CACHE = "trizone-next-0.19.2";
 const NETWORK_FIRST = ["index.html", "plan.json"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then(c =>

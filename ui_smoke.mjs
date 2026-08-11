@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.19.1 · 2026-08-11
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.19.2 · 2026-08-11
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -46,7 +46,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.19.1 · 2026-08-11" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.19.2 · 2026-08-11" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -332,7 +332,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.19.1 · 2026-08-11", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.19.2 · 2026-08-11", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -627,7 +627,7 @@ clickBtn({ nav: "idag" });
 has(els.app.innerHTML, "Motorn varnar", "trendsignalen når varningstrappan");
 has(els.app.innerHTML, "recovery-watch", "trendvarningen namnger sin regel");
 has(els.app.innerHTML, "Volym går bra", "varningen säger vad man KAN göra, inte bara vad som är fel");
-has(els.app.innerHTML, "Nivå 3 ändrar aldrig planen", "trendsignalen rör aldrig planen");
+has(els.app.innerHTML, "Varningar ändrar aldrig planen", "trendsignalen rör aldrig planen — trappan bär nu även nivå 1-stående uppmaningar");
 ok(!JSON.parse(mem.get("trizone.overlay.v1")).sessions["sk-w42-run-thr"]?.events
      ?.some(e => e.rule === "sleep-guard" || e.rule === "recovery-watch"),
    "varken dags- eller trendsignal ändrar overlayn på egen hand (D2, H1)");

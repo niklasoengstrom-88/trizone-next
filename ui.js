@@ -14,11 +14,11 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks, week
          pickActivitySource, zoneParityFull, recovery, wellnessFlags,
          emptyCache, V32_CACHE_KEY, statusGrid, pmcStatus, effTrend, zoneBand, dailyLoads, dayShift,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
-         DAY_FLAGS, setDayFlag, clearDayFlag, dayFlagActive, dayFlagEngineFlags,
+         DAY_FLAGS, setDayFlag, clearDayFlag, dayFlagActive, dayFlagEngineFlags, groupWarns,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
          orderExport, blockForDate, pastSummary, buildPosition } from "./core.js";
 
-export const UI_BUILD = "next-0.19.1 · 2026-08-11";
+export const UI_BUILD = "next-0.19.2 · 2026-08-11";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -1219,11 +1219,12 @@ function warnStep(h) {                     /* varningstrappan (designspråk §7)
   if (dups > 0) console.warn(`[TRIZONE] ${dups} dubblettvarningar filtrerade — rapportera med säkerhetskopia`);
   const unseen = uniq.filter(w => !S.seen.has(w.rule + "|" + w.session));
   if (!unseen.length) return;
-  h.push(`<section class="warnbanner"><div class="eyebrow">Motorn varnar · ${unseen.length}</div>
-    ${unseen.map(w => `<div class="wrow"><span class="evrule">${esc(w.rule)}</span>
-      <div class="evwhy">${esc(w.why)}</div></div>`).join("")}
+  const groups = groupWarns(unseen);          /* 0.19.2: fem pass, en uppmaning */
+  h.push(`<section class="warnbanner"><div class="eyebrow">Motorn varnar · ${groups.length}</div>
+    ${groups.map(g => `<div class="wrow"><span class="evrule">${esc(g.rule)}</span>
+      <div class="evwhy">${esc(g.why)}${g.n > 1 ? ` <span class="dim">· ${g.n} pass</span>` : ""}</div></div>`).join("")}
     <div class="acts"><button class="ghostbtn" data-warnack>Sett</button></div>
-    <p class="hint">Nivå 3 ändrar aldrig planen. Du bestämmer.</p></section>`);
+    <p class="hint">Varningar ändrar aldrig planen. Du bestämmer.</p></section>`);
 }
 
 function questionCards(h) {                /* D2: motorn frågar, användaren svarar */
@@ -1427,6 +1428,9 @@ function wire() {
       const on = (S.overlay?.modes?.active ?? []).find(a => a.rule === rule);
       if (on) {
         S.overlay = deactivateMode(S.overlay, rule + "@" + on.from, now());
+        for (const k of [...S.seen]) if (k.startsWith(rule + "|")) S.seen.delete(k);
+        /* 0.19.2: en kvitterad stående varning hör till DEN aktiveringen —
+           nästa aktivering ska tala igen, inte ärva gammal tystnad */
         const w = S.store.saveOverlay(S.overlay);
         S.note = w.ok ? { text: `${LIFE_MODES[rule].label} avslaget — föregående tillstånd återställt.` }
                       : { text: w.error, bad: true };

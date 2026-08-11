@@ -2185,10 +2185,72 @@ racePlan.weeks.find(w => w.week === 43).type = "race";   /* sk-w43-run-thr blir 
        .some(a => a.rule === "illness-rampback" && a.session === "sk-w43-run-thr"),
      "B19-4: comeback-grinden växlar aldrig ned race-passet — det beslutet är coachens"); }
 
+/* ================================================================
+   0.19.2 — STÅENDE VARNINGAR: en uppmaning som ackompanjerar ett
+   tillstånd (sjukdom över race, missed på race-pass) återutvärderas
+   vid varje körning — den blinkar aldrig och dör. H4 passeras,
+   inga händelser loggas (lägesaktiveringen är redan spårad).
+   Fynd på S25 2026-08-11: coachvarningen försvann efter första
+   motorkörningen — H4 spärrade återutsändningen.
+   ================================================================ */
+import { groupWarns } from "./core.js";
+
+{ /* PERMANENT REGRESSIONSVAKT: varningen står kvar trots loggad händelse idag */
+  const ov = { sessions: { "sk-w43-run-thr": { events: [
+      { rule: "illness-stop", session: "sk-w43-run-thr", action: "warn",
+        why: "Sjukdom över tävling: racets upplägg ändras bara i dialog med coach.",
+        t: "2026-10-19T07:00:00" } ] } },
+    modes: { active: [mode("illness-stop", "2026-10-19", "2026-10-25")] } };
+  const r = applyRules(racePlan, ov, B, [], "2026-10-19T09:00:00");
+  const w = r.actions.filter(a => a.session === "sk-w43-run-thr" && a.action === "warn");
+  ok(w.length === 1 && w[0].standing === true,
+     "standing: coachvarningen återutsänds trots H4-logg samma dygn — den ackompanjerar tillståndet");
+  /* ...och tillämpning spammar inte historiken */
+  const ov2 = applyActions(ov, r.actions);
+  eq((ov2.sessions["sk-w43-run-thr"].events ?? []).length, 1,
+     "standing: tillämpad stående varning loggas ALDRIG som händelse — historiken är ren"); }
+
+{ /* missed på race-pass svarar med coachtext VARJE gång, även andra trycket samma dag */
+  const r1 = applyRules(racePlan, {}, B, [{ id: "missed", sessionId: "sk-w43-run-thr" }],
+                        "2026-10-21T06:00:00");
+  const ovA = applyActions({}, r1.actions);
+  const r2 = applyRules(racePlan, ovA, B, [{ id: "missed", sessionId: "sk-w43-run-thr" }],
+                        "2026-10-21T08:00:00");
+  ok(r2.actions.some(a => a.session === "sk-w43-run-thr" && a.action === "warn"
+                          && a.why.includes("coach")),
+     "standing: andra Hinner inte-trycket får samma ärliga svar, aldrig tystnad"); }
+
+{ /* vanliga varningar är OFÖRÄNDRADE: bär inte standing; nivå 3 är flaggdriven
+     och återutsänds per körning (H4 gäller bara push-vägen); en icke-stående
+     varning som TILLÄMPAS loggas som händelse — applyActions-kontraktet */
+  const r1 = applyRules(plan, {}, B, [{ id: "rpe-watch", sessionId: "sk-w42-run-thr" }], NOW);
+  const w1 = A(r1, "rpe-watch", "warn");
+  ok(w1.length === 1 && !w1[0].standing, "vanlig varning: bär inte standing");
+  const ovA = applyActions({}, r1.actions);
+  ok((ovA.sessions["sk-w42-run-thr"].events ?? []).some(e => e.rule === "rpe-watch"),
+     "vanlig varning: tillämpad ⇒ loggad, precis som förut");
+  const r2 = applyRules(plan, ovA, B, [{ id: "rpe-watch", sessionId: "sk-w42-run-thr" }], NOW);
+  ok(r2.actions.some(a => a.rule === "rpe-watch"),
+     "nivå 3 är flaggdriven: så länge flaggan står återutsänds varningen — trappan tystnar aldrig i förtid"); }
+
+{ /* aggregering: identiska (regel, varför) faller ihop till EN rad med passräkning */
+  const ws = [
+    { rule: "illness-stop", session: "a", action: "warn", why: "Sjukdom över tävling: X." },
+    { rule: "illness-stop", session: "b", action: "warn", why: "Sjukdom över tävling: X." },
+    { rule: "illness-stop", session: "c", action: "warn", why: "Sjukdom över tävling: X." },
+    { rule: "heavy-legs",   session: "d", action: "warn", why: "Tunga ben: Y." } ];
+  const g = groupWarns(ws);
+  eq(g.length, 2, "aggregering: fyra varningar, två rader");
+  const ill = g.find(x => x.rule === "illness-stop");
+  eq(ill.n, 3, "aggregering: passräkningen följer med");
+  eq(ill.sessions, ["a", "b", "c"], "aggregering: passen listas — Sett kvitterar alla tre");
+  eq(g.find(x => x.rule === "heavy-legs").n, 1, "aggregering: ensam varning står ensam");
+  eq(groupWarns([]), [], "aggregering: tom lista är tom lista"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 759;
+const EXPECTED_MIN = 770;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;
