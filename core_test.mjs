@@ -2108,10 +2108,87 @@ const thrSess = plan.sessions.find(s => s.id === "sk-w42-run-thr");
   ok(!b.modes.snapshots["dayflag:sleep@2026-10-14"],
      "städning: gårdagens snapshot prunas — dagen hände med flaggan, inget återställs"); }
 
+/* ================================================================
+   0.19.1 — B19-3: motorn riktar ALDRIG en åtgärd mot ett utfört pass.
+   Utförda pass är historia; ändring korrumperar utfall-mot-plan och
+   varningar om det redan skedda är brus. Undantag: utfallsflaggor
+   (rpe-watch) — de bär information om återhämtning, inte en uppmaning
+   att ändra passet.
+   ================================================================ */
+{ const done = { sessions: { "sk-w42-run-thr": { status: "done" } } };
+  const ovTf = { ...done, modes: { active: [mode("tissue-freeze", "2026-10-12", "2026-10-18")] } };
+  ok(!applyRules(plan, ovTf, B, [], NOW).actions.some(a => a.session === "sk-w42-run-thr"),
+     "B19-3: tissue-freeze byter aldrig gren på ett utfört pass");
+  const ovIll = { ...done, modes: { active: [mode("illness-stop", "2026-10-12", "2026-10-18")] } };
+  const rIll = applyRules(plan, ovIll, B, [], NOW);
+  ok(!rIll.actions.some(a => a.session === "sk-w42-run-thr"),
+     "B19-3: illness-stop stryker aldrig ett utfört pass — det hann hända");
+  ok(A(rIll, "illness-stop", "strike").length >= 1,
+     "B19-3: övriga planerade pass i spannet stryks fortfarande");
+  const ovVac = { ...done, modes: { active: [mode("mode-vacation", "2026-10-12", "2026-10-18")] } };
+  ok(!applyRules(plan, ovVac, B, [], NOW).actions.some(a => a.session === "sk-w42-run-thr"),
+     "B19-3: semester rör aldrig ett utfört A-pass");
+  const rMiss = applyRules(plan, done, B, [{ id: "missed", sessionId: "sk-w42-run-thr" }], NOW);
+  ok(!rMiss.actions.some(a => a.session === "sk-w42-run-thr"),
+     "B19-3: ett utfört pass kan inte missas — flaggan är inert"); }
+
+{ /* B19-3: strukturvarningar tystas när målet är utfört — quality-spacing
+     om ett redan genomfört pass är brus, inte vägledning */
+  const done = { sessions: { "sk-w42-run-thr": { status: "done" } } };
+  const r = applyRules(plan, done, B, [], NOW);
+  ok(!r.actions.some(a => a.action === "warn" && a.session === "sk-w42-run-thr"
+                          && (a.rule === "quality-spacing" || a.rule === "heavy-legs")),
+     "B19-3: strukturvarning riktas aldrig mot utfört pass");
+  const rRpe = applyRules(plan, done, B, [{ id: "rpe-watch", sessionId: "sk-w42-run-thr" }], NOW);
+  ok(A(rRpe, "rpe-watch", "warn").length === 1,
+     "B19-3: rpe-watch är UNDANTAGEN — utfallsflaggan talar om återhämtning, inte om passet"); }
+
+/* ================================================================
+   0.19.1 — B19-4: lägen och dagsform rör ALDRIG pass i race-veckor.
+   Racets upplägg ägs av atlet + coach i separat dialog. Sjukdom över
+   tävling ⇒ uppmaning till coachdialog, aldrig tyst strykning.
+   ================================================================ */
+const racePlan = structuredClone(plan);
+racePlan.weeks.find(w => w.week === 43).type = "race";   /* sk-w43-run-thr blir race-pass */
+
+{ const ovTf = { modes: { active: [mode("tissue-freeze", "2026-10-19", "2026-10-25")] } };
+  ok(!applyRules(racePlan, ovTf, B, [], "2026-10-19T07:00:00").actions
+       .some(a => a.session === "sk-w43-run-thr" && a.action !== "warn"),
+     "B19-4: känning byter aldrig gren på race-veckans pass");
+  const ovVac = { modes: { active: [mode("mode-vacation", "2026-10-19", "2026-10-25")] } };
+  ok(!applyRules(racePlan, ovVac, B, [], "2026-10-19T07:00:00").actions
+       .some(a => a.session === "sk-w43-run-thr" && a.action !== "warn"),
+     "B19-4: semester kortar aldrig race-veckans A-pass");
+  const rSleep = applyRules(racePlan, {}, B,
+    [{ id: "sleep-guard", source: "manual", date: "2026-10-21" }], "2026-10-21T06:00:00");
+  ok(!rSleep.actions.some(a => a.rule === "sleep-guard"),
+     "B19-4: dålig natt växlar aldrig ned ett race-pass — race-morgonen är din och coachens");
+  const rMiss = applyRules(racePlan, {}, B,
+    [{ id: "missed", sessionId: "sk-w43-run-thr" }], "2026-10-21T06:00:00");
+  ok(!rMiss.actions.some(a => a.session === "sk-w43-run-thr" && a.action !== "warn"),
+     "B19-4: race-pass flyttas/stryks aldrig av missed");
+  ok(rMiss.actions.some(a => a.session === "sk-w43-run-thr" && a.action === "warn"
+                             && a.why.includes("coach")),
+     "B19-4: missed på race-pass svarar med coachdialog-uppmaning"); }
+
+{ /* sjukdom över tävling: race-passet står kvar, uppmaningen syns */
+  const ov = { modes: { active: [mode("illness-stop", "2026-10-19", "2026-10-25")] } };
+  const r = applyRules(racePlan, ov, B, [], "2026-10-19T07:00:00");
+  ok(!r.actions.some(a => a.session === "sk-w43-run-thr" && a.action === "strike"),
+     "B19-4: sjukdom stryker aldrig race-passet tyst");
+  ok(r.actions.some(a => a.session === "sk-w43-run-thr" && a.action === "warn"
+                         && a.why.includes("coach")),
+     "B19-4: sjukdom över tävling ⇒ uppmaning till coachdialog");
+  /* comeback-grind + race: kvalitet i race-vecka hålls INTE nere av rampback */
+  const ovCb = { modes: { comeback: { need: 2, z2done: 0, passed: false, after: "2026-10-18" } } };
+  ok(!applyRules(racePlan, ovCb, B, [], "2026-10-19T07:00:00").actions
+       .some(a => a.rule === "illness-rampback" && a.session === "sk-w43-run-thr"),
+     "B19-4: comeback-grinden växlar aldrig ned race-passet — det beslutet är coachens"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 744;
+const EXPECTED_MIN = 759;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

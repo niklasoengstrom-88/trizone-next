@@ -18,7 +18,7 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks, week
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
          orderExport, blockForDate, pastSummary, buildPosition } from "./core.js";
 
-export const UI_BUILD = "next-0.19.0 · 2026-08-11";
+export const UI_BUILD = "next-0.19.1 · 2026-08-11";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
@@ -115,6 +115,7 @@ function render() {
        aria-current="${tabOf(id) ? "page" : "false"}">${label}</button>`).join("") + `</nav>`);
   if (S.sel) { const s = findSess(S.sel); if (s) h.push(sheet(s)); }
   if (S.note) h.push(`<div class="toast${S.note.bad ? " bad" : ""}">${esc(S.note.text)}</div>`);
+  scheduleToast();
   app().innerHTML = h.join("");
   document.getElementById("impfile")?.addEventListener("change", async (ev) => {
     const f = ev.target.files?.[0];
@@ -1234,6 +1235,23 @@ function questionCards(h) {                /* D2: motorn frågar, användaren sv
       <button class="ghostbtn" data-eqno="${esc(q.rule)}">Nej</button></div></div>`);
   }
   h.push(`</section>`);
+}
+
+/* ---------- Toast-timeout (0.19.1, S25-fynd) ----------
+   Kvittenser låg kvar tills nästa tryck och skymde kromet. Ok-toaster
+   släcks själva; FELtoaster ligger kvar tills nästa interaktion — ett fel
+   ska inte kunna blinka förbi oläst. Samma note-objekt startar aldrig om
+   sin klocka vid omrendering. */
+const TOAST_MS = () => globalThis.__TZ_TOAST_MS ?? 4500;
+let toastRef = null, toastTimer = null;
+function scheduleToast() {
+  if (!S.note) { toastRef = null; return; }
+  if (S.note.bad || S.note === toastRef) return;
+  toastRef = S.note;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    if (S.note === toastRef) { S.note = null; render(); }
+  }, TOAST_MS());
 }
 
 /* ---------- Lagring ---------- */

@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.19.0 · 2026-08-11
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.19.1 · 2026-08-11
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -46,7 +46,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.19.0 · 2026-08-11" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.19.1 · 2026-08-11" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -332,7 +332,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.19.0 · 2026-08-11", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.19.1 · 2026-08-11", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -894,6 +894,15 @@ has(els.app.innerHTML, 'data-dayflag="sleep"', "lägeskortet: speglar samma flag
 has(els.app.innerHTML, "släpper vid midnatt", "lägeskortet: cue-texten förklarar livslängden");
 clickBtn({ nav: "idag" });
 
+/* ---------- Toast-timeout (0.19.1, S25-fyndet: kvittensen låg kvar) ---------- */
+globalThis.__TZ_TOAST_MS = 15;
+clickBtn({ nav: "idag" }); clickBtn({ eqno: "finns-inte" });   /* ofarlig kvittensväg */
+has(els.app.innerHTML, "Nej — planen är orörd", "toast: kvittensen syns direkt efter handlingen");
+await new Promise(r => setTimeout(r, 60));
+ok(!els.app.innerHTML.includes("Nej — planen är orörd"),
+   "toast: kvittensen släcker sig själv — ligger aldrig kvar och skymmer (S25-fyndet)");
+delete globalThis.__TZ_TOAST_MS;
+
 /* ---------- Toast över flikraden (S25-fyndet, 0.18.3) ----------
    CSS-läget vaktas som text, samma grepp som sw-cachevakten: toastens
    z-index ska vara högre än flikradens, och dess bottom-offset ska rymma
@@ -907,7 +916,7 @@ clickBtn({ nav: "idag" });
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 332;
+const EXPECTED_MIN = 334;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

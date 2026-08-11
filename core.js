@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.19.0 · 2026-08-11";
+export const BUILD = "next-0.19.1 · 2026-08-11";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -425,6 +425,15 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   const firedToday = (rule, id) =>
     (ov.sessions?.[id]?.events ?? []).some(e => e.rule === rule && String(e.t).slice(0, 10) === nowDate);
 
+  /* B19-3: motorn riktar aldrig en åtgärd mot ett utfört pass — historia
+     skrivs inte om, och varningar om det redan skedda är brus. */
+  const isPlanned = s => (s.status ?? "planned") === "planned";
+  /* B19-4: race-veckans pass ägs av atlet + coach. Lägen, dagsform och
+     missed rör dem aldrig — sjukdom och missed svarar med dialog-uppmaning. */
+  const raceWeeks = new Set((plan.weeks ?? []).filter(w => w.type === "race").map(w => w.week));
+  const inRaceWeek = s => raceWeeks.has(s.week);
+  const coachWarn = (rule, s, why) => push(rule, 1, s.id, "warn", why, {}, {});
+
   const push = (rule, level, id, action, why, payload = {}, orig = {}, extra = {}) => {
     /* H4 vaktar automatiska triggers. Användarstyrda lägen (modeKey) är redan
        bekräftade — spärra dem inte, annars dör ett omaktiverat läge samma dygn
@@ -455,7 +464,12 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* illness-stop: allt i spannet stryks, även protected och C — feber tränas aldrig igenom */
   for (const m of modes.filter(m => m.rule === "illness-stop")) {
     for (const s of list()) {
-      if (s.status === "struck" || !sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
+      if (!isPlanned(s) || !sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
+      if (inRaceWeek(s)) {                                           /* B19-4 */
+        coachWarn("illness-stop", s,
+          "Sjukdom över tävling: racets upplägg ändras bara i dialog med coach.");
+        continue;
+      }
       if (push("illness-stop", 1, s.id, "strike",
                "Sjukdomsstopp: allt i spannet stryks. Feber tränas aldrig igenom.",
                {}, { status: s.status ?? "planned" },
@@ -469,7 +483,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     const sports = m.sport ? [].concat(m.sport) : (b.sport ?? []);
     const sub = b.substitute ?? {};
     for (const s of list()) {
-      if (s.status === "struck" || !sports.includes(s.sport)) continue;
+      if (!isPlanned(s) || inRaceWeek(s) || !sports.includes(s.sport)) continue;   /* B19-3/-4 */
       if (!sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
       const target = isQuality(s) ? sub.quality : sub.easy;
       if (!target || target === s.sport) continue;
@@ -482,7 +496,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* sleep-guard — D2: derived frågar, manual agerar */
   for (const f of flags.filter(f => f.id === "sleep-guard")) {
     const day = f.date ?? nowDate;
-    const targets = list().filter(s => (s.status ?? "planned") === "planned"
+    const targets = list().filter(s => isPlanned(s) && !inRaceWeek(s)          /* B19-3/-4 */
                                        && isQuality(s) && dateOf(s.id) === day);
     if (!targets.length) continue;
     if (f.source === "derived") {
@@ -505,7 +519,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   const cb = ov.modes?.comeback;
   if (cb && !cb.passed) {
     for (const s of list()) {
-      if (s.status === "struck" || !isQuality(s)) continue;
+      if (!isPlanned(s) || inRaceWeek(s) || !isQuality(s)) continue;             /* B19-3/-4 */
       const d = dateOf(s.id);
       if (!d || !(d > cb.after)) continue;
       const np = downgradeProfile(s.profile);
@@ -525,7 +539,8 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* mode-vacation: B stryks (ej protected), A till underhållsdos. C är luft. */
   for (const m of modes.filter(m => m.rule === "mode-vacation")) {
     for (const s of list()) {
-      if (s.status === "struck" || s.prio === "C" || !sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
+      if (!isPlanned(s) || inRaceWeek(s) || s.prio === "C"                        /* B19-3/-4 */
+          || !sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
       if (s.prio === "B" && !s.protected) {
         if (push("mode-vacation", 2, s.id, "strike",
                  "Semester: B-pass stryks och jagas inte ikapp.",
@@ -540,7 +555,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* mode-reduced: veckan komprimeras till A. B stryks (ej protected), C är luft. */
   for (const m of modes.filter(m => m.rule === "mode-reduced")) {
     for (const s of list()) {
-      if (s.status === "struck" || s.prio !== "B" || s.protected) continue;
+      if (!isPlanned(s) || inRaceWeek(s) || s.prio !== "B" || s.protected) continue;   /* B19-3/-4 */
       if (!sessionInSpan(plan, s, m.from, m.to, nowDate)) continue;
       if (push("mode-reduced", 2, s.id, "strike",
                "Reducerad vecka: komprimeras till A-passen. B stryks.",
@@ -571,7 +586,12 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
 
   for (const f of flags.filter(f => f.id === "missed" && f.sessionId)) {
     const s = work[f.sessionId];
-    if (!s || s.status === "struck" || s.prio === "C") continue;   /* C: luft, flaggas aldrig */
+    if (!s || !isPlanned(s) || s.prio === "C") continue;   /* C: luft, flaggas aldrig; B19-3 */
+    if (inRaceWeek(s)) {                                   /* B19-4 */
+      coachWarn(s.prio === "B" ? "missed-B" : "missed-A", s,
+        "Tävlingspass hanteras i dialog med coach — motorn rör det inte.");
+      continue;
+    }
     if (s.prio === "B") {
       if (s.protected) {
         push("missed-B", 2, s.id, "warn",
@@ -595,7 +615,7 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* volume-cap: derived frågar (D2), manual/bekräftad ⇒ warn + shorten */
   for (const f of flags.filter(f => f.id === "volume-cap" && f.sessionId)) {
     const s = work[f.sessionId];
-    if (!s || s.status === "struck") continue;
+    if (!s || !isPlanned(s) || inRaceWeek(s)) continue;    /* B19-3/-4 */
     if (f.source === "derived") {
       questions.push({ rule: "volume-cap", sessions: [s.id],
         ask: `Löpvolymen ligger över taket (${cfg.volumeCapPct} % av 3-veckorssnittet). Korta veckans sista pass?` });
@@ -617,15 +637,19 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
     const h = hoursBetween(plan, a, b);
     if (h == null || h > 24) continue;
     if (isQuality(a) && isQuality(b)) {
-      lvl3.push({ rule: "quality-spacing", level: 3, session: (a.day <= b.day ? b : a).id, action: "warn",
-        why: `Två kvalitetspass inom 24 h: ${sname(a)} och ${sname(b)}. En dags mellanrum rekommenderas.`,
-        payload: {}, orig: {}, t: now, pair: [a.id, b.id] });
+      const tgt = a.day <= b.day ? b : a;
+      /* B19-3: varningen riktas mot det SENARE passet — är det redan utfört
+         finns inget att vägleda. Utfört pass som KONTEXT är fortfarande data. */
+      if (isPlanned(tgt))
+        lvl3.push({ rule: "quality-spacing", level: 3, session: tgt.id, action: "warn",
+          why: `Två kvalitetspass inom 24 h: ${sname(a)} och ${sname(b)}. En dags mellanrum rekommenderas.`,
+          payload: {}, orig: {}, t: now, pair: [a.id, b.id] });
     }
     const st = a.sport === "strength" ? a : b.sport === "strength" ? b : null;
     const q  = st === a ? b : a;
     /* Enkelriktad (spec 1 §6 rev 2026-08-04): regeln skyddar KVALITETSPASSET från
        trötta ben — styrka dagen efter kvalitet är sund sekvensering, inte ett fynd. */
-    if (st && st.sport === "strength" && isQuality(q) &&
+    if (st && st.sport === "strength" && isQuality(q) && isPlanned(q) &&
         (slotClock(plan, st) ?? 0) < (slotClock(plan, q) ?? 0)) {
       lvl3.push({ rule: "heavy-legs", level: 3, session: q.id, action: "warn",
         why: `Tunga ben: styrkan ${sname(st)} ligger inom ett dygn före ${sname(q)} — överväg ordningsbyte.`,
