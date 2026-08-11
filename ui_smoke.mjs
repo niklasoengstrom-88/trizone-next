@@ -1,4 +1,4 @@
-/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.18.3 · 2026-08-10
+/* TRIZONE Next — ui_smoke.mjs · BUILD next-0.19.0 · 2026-08-11
    Röktest av ui.js utan webbläsare: stubbad DOM, storage, pekare och geometri.
    Löpande veckolista (beslut B), dag som släppmål (beslut A). */
 import fs from "node:fs";
@@ -46,7 +46,7 @@ globalThis.window = { innerHeight: 2200, scrollBy() {},
     getItem: k => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) } };
 globalThis.document = {
   getElementById: id => els[id] ?? null,
-  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.18.3 · 2026-08-10" }
+  querySelector: sel => sel?.startsWith?.("meta") ? { content: "next-0.19.0 · 2026-08-11" }
                      : (els[sel] ?? null),
   addEventListener: (t, h) => { (H[t] ??= []).push(h); },
   createElement: () => fakeEl({}, dayRect(0, 0)),
@@ -332,7 +332,7 @@ clickBtn({ nav: "installningar" });
 const STAMP = (await import("./ui.js")).UI_BUILD;
 const CORE_STAMP = (await import("./core.js")).BUILD;
 has(els.app.innerHTML, STAMP, "byggstämpeln bor i Inställningar (T2)");
-ok(STAMP === "next-0.18.3 · 2026-08-10", "stämpeln i ui.js är den väntade för denna release");
+ok(STAMP === "next-0.19.0 · 2026-08-11", "stämpeln i ui.js är den väntade för denna release");
 ok(CORE_STAMP === STAMP, "core.js och ui.js bär SAMMA stämpel — annars serverar sw:n blandade filer");
 { const sw = fs.readFileSync(new URL("./sw.js", import.meta.url), "utf8");
   const ver = STAMP.split(" ")[0].replace("next-", "");
@@ -829,6 +829,71 @@ globalThis.__TZ_TODAY = "2026-10-15";                /* ÅTERSTÄLLD */
 clickBtn({ nav: "idag" }); clickBtn({ nav: "plan" });
 ok(!els.app.innerHTML.includes("avklarad"), "U5: tiden återställd — sviten lämnar rent efter sig");
 
+/* ---------- Dagsform (B19-1, 0.19.0) ----------
+   Tidsskifte till 2026-10-21 (onsdag v.43): sk-w43-run-thr är planerad och
+   omatchad ⇒ Idag står i pass-läge och chipsen renderas. Wellness är för
+   gammal för dagssignal ⇒ inga derived-frågor stör. ÅTERSTÄLLS efteråt. */
+globalThis.__TZ_TODAY = "2026-10-21";
+clickBtn({ nav: "idag" });
+const readOv = () => JSON.parse(globalThis.window.localStorage.getItem("trizone.overlay.v1"));
+
+has(els.app.innerHTML, "Om inte?", "dagsform: chipsbandet renderas under dagens pass");
+has(els.app.innerHTML, 'data-dayflag="sleep"', "dagsform: Sov dåligt-chippet finns");
+has(els.app.innerHTML, 'data-mode="tissue-freeze"', "dagsform: Känning är samma periodläge som i Plan — en mekanism, två ingångar");
+has(els.app.innerHTML, 'class="chipbtn actchip" data-nothit', "dagsform: Hinner inte är actionchip, inte toggle (B19-1)");
+ok(!els.app.innerHTML.includes("gäller idag"), "dagsform: osatt flagga bär ingen giltighetstext");
+
+clickBtn({ dayflag: "sleep" });
+has(els.app.innerHTML, "gäller idag", "flaggan: satt flagga visar sin livslängd");
+{ const ov = readOv();
+  ok(ov.modes.dayflags.length === 1 && ov.modes.dayflags[0].flag === "sleep"
+     && ov.modes.dayflags[0].date === "2026-10-21",
+     "flaggan: datumstämplad i overlayen — ingen ny nyckel");
+  ok(ov.modes.snapshots?.["dayflag:sleep@2026-10-21"], "flaggan: ögonblicksbild tagen");
+  ok((ov.sessions["sk-w43-run-thr"]?.events ?? []).some(e => e.rule === "sleep-guard"),
+     "flaggan: nedväxlingen loggas på passet (P3)"); }
+
+/* Expiry utan omstart (0.18.1-läxan i flaggform): dygnet skiftar med appen öppen */
+globalThis.__TZ_TODAY = "2026-10-22";
+clickBtn({ nav: "plan" }); clickBtn({ nav: "idag" });
+ok(!els.app.innerHTML.includes("gäller idag"),
+   "expiry: nästa dag är flaggan inert i UI:t — PWA öppen över midnatt");
+globalThis.__TZ_TODAY = "2026-10-21";
+clickBtn({ nav: "plan" }); clickBtn({ nav: "idag" });
+
+clickBtn({ dayflag: "sleep" });                      /* av — exakt återställning */
+{ const ov = readOv();
+  ok(ov.modes.dayflags.length === 0, "flaggan: släppt vid andra trycket");
+  ok((ov.sessions["sk-w43-run-thr"]?.events ?? []).some(e => String(e.rule).startsWith("undo:dayflag")),
+     "flaggan: ångringen loggas — historiken skrivs aldrig om"); }
+
+/* Missed-flödet: action → picker → bekräftelse → motorns missed-A */
+clickBtn({ nothit: "" });
+has(els.app.innerHTML, "Vilket pass hinner du inte?", "missed: pickern öppnas av actionchippet");
+has(els.app.innerHTML, "B stryks — jagas aldrig ikapp", "missed: konsekvensen deklareras före beslutet");
+has(els.app.innerHTML, 'data-missed="sk-w43-run-thr"', "missed: dagens pass är valbart");
+clickBtn({ missabort: "" });
+ok(!els.app.innerHTML.includes("Vilket pass hinner du inte?"), "missed: Avbryt stänger pickern");
+clickBtn({ nothit: "" }); clickBtn({ missed: "sk-w43-run-thr" });
+{ const ov = readOv();
+  const ev = (ov.sessions["sk-w43-run-thr"]?.events ?? []).filter(e => String(e.rule).startsWith("missed"));
+  ok(ev.length >= 1, "missed: motorns missed-A körs och loggas på passet");
+  ok(ov.sessions["sk-w43-run-thr"]?.moved || ov.sessions["sk-w43-run-thr"]?.status === "struck",
+     "missed: utfallet är flytt eller strykning — aldrig tyst"); }
+ok(!els.app.innerHTML.includes("Vilket pass hinner du inte?"), "missed: pickern stängs efter beslut");
+
+globalThis.__TZ_TODAY = "2026-10-15";                /* ÅTERSTÄLLD */
+clickBtn({ nav: "idag" });
+ok(!els.app.innerHTML.includes("Om inte?"),
+   "dagsform: Klart för idag ⇒ inga chips — det finns inget kvar att inte hinna");
+
+/* Dagsform-gruppen i lägeskortet (0.18.1 lämnade platsen — nu fylld) */
+clickBtn({ nav: "plan" });
+has(els.app.innerHTML, ">Dagsform<", "lägeskortet: Dagsform-gruppen finns");
+has(els.app.innerHTML, 'data-dayflag="sleep"', "lägeskortet: speglar samma flagga som Idag");
+has(els.app.innerHTML, "släpper vid midnatt", "lägeskortet: cue-texten förklarar livslängden");
+clickBtn({ nav: "idag" });
+
 /* ---------- Toast över flikraden (S25-fyndet, 0.18.3) ----------
    CSS-läget vaktas som text, samma grepp som sw-cachevakten: toastens
    z-index ska vara högre än flikradens, och dess bottom-offset ska rymma
@@ -842,7 +907,7 @@ ok(!els.app.innerHTML.includes("avklarad"), "U5: tiden återställd — sviten l
 
 /* Svitvakt (fas B) — röksviten saknade den vakt kärnsviten fick efter
    2026-08-02. En avkortad svit som rapporterar grönt är värre än en röd. */
-const EXPECTED_MIN = 309;
+const EXPECTED_MIN = 332;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ RÖKSVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

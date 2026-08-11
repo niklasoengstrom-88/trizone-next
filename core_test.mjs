@@ -2006,10 +2006,112 @@ import { buildPosition } from "./core.js";
   eq(gap.pct, 50, "bp: glappet bär de passerade blockens procent");
   eq(gap.bands.map(x => x.state), ["past", "future"], "bp: banden vet var vi står runt glappet"); }
 
+/* ================================================================
+   0.19.0 — DYGNSFLAGGOR (B19-1): datumstämplade i overlayen,
+   auto-expiry vid dygnsskifte, exakt återställning via snapshot,
+   handen vinner. LIFE_MODES rörs inte — skilda livscykler.
+   ================================================================ */
+import { DAY_FLAGS, setDayFlag, clearDayFlag, dayFlagActive,
+         dayFlagEngineFlags } from "./core.js";
+const thrSess = plan.sessions.find(s => s.id === "sk-w42-run-thr");
+
+{ /* B19-1: strukturerna blandas inte */
+  ok(DAY_FLAGS.sleep && !DAY_FLAGS["tissue-freeze"] && !LIFE_MODES.sleep,
+     "B19-1: dygnsflaggor och periodlägen är skilda kataloger");
+  eq(DAY_FLAGS.sleep.rule, "sleep-guard", "B19-1: sleep-flaggan pekar på sleep-guard"); }
+
+{ /* set → motorflagga → downgrade med snapshot → clear → exakt återställning */
+  const r0 = setDayFlag({}, "sleep", "2026-10-15", "2026-10-15T06:10:00");
+  ok(!r0.error && r0.key === "dayflag:sleep@2026-10-15", "dayflag: sätts med nyckel");
+  ok(dayFlagActive(r0.overlay, "sleep", "2026-10-15"), "dayflag: aktiv på sin dag");
+  ok(!dayFlagActive(r0.overlay, "sleep", "2026-10-16"), "dayflag: inaktiv annan dag");
+  const f = dayFlagEngineFlags(r0.overlay, "2026-10-15");
+  eq(f, [{ id: "sleep-guard", source: "manual", date: "2026-10-15",
+           modeKey: "dayflag:sleep@2026-10-15" }],
+     "dayflag: motorflaggan är manual och bär modeKey");
+  const r = applyRules(plan, r0.overlay, B, f, "2026-10-15T06:11:00");
+  eq(A(r, "sleep-guard", "downgrade", "sk-w42-run-thr").length, 1,
+     "dayflag: dagens kvalitetspass växlas ned");
+  const ov1 = applyActions(r0.overlay, r.actions);
+  ok(ov1.modes.snapshots?.["dayflag:sleep@2026-10-15"]?.["sk-w42-run-thr"] !== undefined,
+     "dayflag: ögonblicksbild tagen före första beröring");
+  const ov2 = clearDayFlag(ov1, "sleep", "2026-10-15", "2026-10-15T08:00:00");
+  ok(!dayFlagActive(ov2, "sleep", "2026-10-15"), "dayflag: släppt");
+  const eff = effectiveSession(thrSess, ov2.sessions["sk-w42-run-thr"]);
+  ok(zoneDist(eff.profile)[3] > 0, "dayflag: släpp återställer profilen exakt — Z4 tillbaka");
+  ok(ov2.sessions["sk-w42-run-thr"].events.some(e => String(e.rule).startsWith("undo:dayflag")),
+     "dayflag: ångringen loggas, historiken skrivs aldrig om");
+  ok(!ov2.modes.snapshots?.["dayflag:sleep@2026-10-15"], "dayflag: snapshoten städas vid släpp"); }
+
+{ /* PERMANENT REGRESSIONSVAKT (0.18.1-läxan i flaggform): tidsskifte utan omstart.
+     En flagga satt på kvällen får ALDRIG växla ned nästa dags pass. */
+  const r0 = setDayFlag({}, "sleep", "2026-10-15", "2026-10-15T22:40:00");
+  eq(dayFlagEngineFlags(r0.overlay, "2026-10-15").length, 1, "expiry: flaggan lever sin dag");
+  eq(dayFlagEngineFlags(r0.overlay, "2026-10-16").length, 0,
+     "expiry: samma overlay, nästa dag ⇒ ingen motorflagga — PWA öppen över midnatt");
+  const r = applyRules(plan, r0.overlay, B,
+                       dayFlagEngineFlags(r0.overlay, "2026-10-16"), "2026-10-16T06:00:00");
+  ok(!r.actions.some(a => a.rule === "sleep-guard"),
+     "expiry: sleep-guard fyrar inte dagen efter — utvärdering per körning, aldrig boot") ; }
+
+{ /* handen vinner: manuell ändring under flaggans gång behålls vid släpp */
+  const r0 = setDayFlag({}, "sleep", "2026-10-15", "2026-10-15T06:10:00");
+  const r = applyRules(plan, r0.overlay, B, dayFlagEngineFlags(r0.overlay, "2026-10-15"),
+                       "2026-10-15T06:11:00");
+  const ov = applyActions(r0.overlay, r.actions);
+  const so = ov.sessions["sk-w42-run-thr"];
+  so.adjust = { ...so.adjust, durationMin: 30 };
+  so.events.push({ rule: "manual-adjust", session: "sk-w42-run-thr", action: "shorten",
+                   why: "kortat av användaren", t: "2026-10-15T07:00:00" });
+  const ov2 = clearDayFlag(ov, "sleep", "2026-10-15", "2026-10-15T08:00:00");
+  eq(ov2.sessions["sk-w42-run-thr"].adjust.durationMin, 30,
+     "handen vinner: användarens version behålls när flaggan släpps");
+  ok(ov2.sessions["sk-w42-run-thr"].events.some(e => e.action === "keep"),
+     "handen vinner: keep-beslutet loggas"); }
+
+{ /* på/av/på samma dag (0.9.0-läxan): modeKey passerar H4 */
+  const r0 = setDayFlag({}, "sleep", "2026-10-15", "2026-10-15T06:10:00");
+  const r1 = applyRules(plan, r0.overlay, B, dayFlagEngineFlags(r0.overlay, "2026-10-15"),
+                        "2026-10-15T06:11:00");
+  const ovOn  = applyActions(r0.overlay, r1.actions);
+  const ovOff = clearDayFlag(ovOn, "sleep", "2026-10-15", "2026-10-15T06:30:00");
+  const r2 = setDayFlag(ovOff, "sleep", "2026-10-15", "2026-10-15T06:45:00");
+  ok(!r2.error, "på/av/på: flaggan kan sättas om samma dag");
+  const r3 = applyRules(plan, r2.overlay, B, dayFlagEngineFlags(r2.overlay, "2026-10-15"),
+                        "2026-10-15T06:46:00");
+  eq(A(r3, "sleep-guard", "downgrade", "sk-w42-run-thr").length, 1,
+     "på/av/på: nedväxlingen tillämpas igen — H4 spärrar aldrig ett bekräftat läge"); }
+
+{ /* sleep-guard rör aldrig ett UTFÖRT pass: flaggan sätts efter träningen ⇒
+     planprofilen lämnas orörd, annars korrumperas utfall-mot-plan (0.19.0-fynd) */
+  const ov = { sessions: { "sk-w42-run-thr": { status: "done" } } };
+  const r = applyRules(plan, ov, B,
+                       [{ id: "sleep-guard", source: "manual", date: "2026-10-15" }],
+                       "2026-10-15T20:00:00");
+  ok(!r.actions.some(a => a.rule === "sleep-guard"),
+     "sleep-guard: utfört pass växlas aldrig ned i efterhand") ; }
+
+{ /* vakter: okänd flagga, trasigt datum, dubblett */
+  ok(setDayFlag({}, "kaffe", "2026-10-15").error, "dayflag: okänd flagga avvisas");
+  ok(setDayFlag({}, "sleep", "igår").error, "dayflag: trasigt datum avvisas");
+  const a = setDayFlag({}, "sleep", "2026-10-15", "t").overlay;
+  ok(setDayFlag(a, "sleep", "2026-10-15").error, "dayflag: dubblett avvisas");
+  eq(clearDayFlag({}, "sleep", "2026-10-15", "t"), { sessions: {}, modes: {} },
+     "dayflag: släpp av osatt flagga är ofarligt"); }
+
+{ /* städning: gårdagens flagga + snapshot prunas när ny dags flagga sätts */
+  const a = setDayFlag({}, "sleep", "2026-10-14", "2026-10-14T06:00:00").overlay;
+  a.modes.snapshots = { "dayflag:sleep@2026-10-14": { "sk-w42-run-thr": {} } };
+  const b = setDayFlag(a, "sleep", "2026-10-15", "2026-10-15T06:00:00").overlay;
+  eq(b.modes.dayflags.map(x => x.date), ["2026-10-15"],
+     "städning: gårdagens flagga följer inte med in i ny dag");
+  ok(!b.modes.snapshots["dayflag:sleep@2026-10-14"],
+     "städning: gårdagens snapshot prunas — dagen hände med flaggan, inget återställs"); }
+
 /* ---------- Svitvakt (regression 2026-08-02) ----------
    En kvarglömd avslutning mitt i filen lät sviten sluta tyst efter 102 tester
    och rapportera grönt. En svit som ljuger uppåt är värre än en röd svit. */
-const EXPECTED_MIN = 718;
+const EXPECTED_MIN = 744;
 if (pass + fail < EXPECTED_MIN) {
   console.error(`  ✗ SVITEN AVBRÖTS: ${pass+fail} tester kördes, minst ${EXPECTED_MIN} väntade`);
   fail++;

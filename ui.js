@@ -14,15 +14,16 @@ import { BUILD as CORE_BUILD, validatePlan, makeStore, weekView, planWeeks, week
          pickActivitySource, zoneParityFull, recovery, wellnessFlags,
          emptyCache, V32_CACHE_KEY, statusGrid, pmcStatus, effTrend, zoneBand, dailyLoads, dayShift,
          applyRules, applyActions, deactivateMode, activateMode, LIFE_MODES,
+         DAY_FLAGS, setDayFlag, clearDayFlag, dayFlagActive, dayFlagEngineFlags,
          ENGINE_FIELDS, ENGINE, athleteGuard, isQuality,
          orderExport, blockForDate, pastSummary, buildPosition } from "./core.js";
 
-export const UI_BUILD = "next-0.18.3 · 2026-08-10";
+export const UI_BUILD = "next-0.19.0 · 2026-08-11";
 
 const S = { plan:null, overlay:null, store:null, week:null, sel:null, tapMove:null, note:null,
             acts:[], mq:[], unplanned:[], importOpen:false, selDay:null, logOpen:null, adjOpen:null, zpar:null, evOpen:false, histOpen:null,
             monthOpen:false, monthYM:null,
-            eq:[], warns:[], seen:new Set(), modeOpen:false,
+            eq:[], warns:[], seen:new Set(), modeOpen:false, missPick:false,
             view:"idag", cfg:structuredClone(DEFAULT_CFG), cfgError:null, parity:[],
             /* fas B: egen datapipeline */
             cache:emptyCache(), src:null, athlete:null, bench:null, recov:null,
@@ -255,6 +256,7 @@ function renderIdag(h) {
     h.push(heroCard(t.hero));
     if (t.also.length) h.push(`<div class="eyebrow alsohead">Även idag</div>
       <div class="dsessions">${t.also.map(s => sessionCard(s)).join("")}</div>`);
+    dayformChips(h, [t.hero, ...t.also].filter(s => s && s.status !== "struck"));
     if (t.done.length) h.push(`<div class="eyebrow alsohead">Utfört idag</div>
       <div class="dsessions">${t.done.map(s => sessionCard(s)).join("")}</div>`);
   }
@@ -300,13 +302,20 @@ function confirmSection(h) {
 function modesSection(h) {
   h.push(`<section class="modes card"><div class="eyebrow">Livslägen &amp; dagsform</div>
     <p class="hint">Alla regler som formar planen — samlade här. Idag-fliken flaggar när något är aktivt.</p>
+    <div class="slot-lbl">Dagsform</div>
+    <div class="lifemodes">${Object.entries(DAY_FLAGS).map(([flag, m]) => {
+      const on = dayFlagActive(S.overlay, flag, today());
+      return `<button class="chipbtn modetog${on ? " on" : ""}" data-dayflag="${flag}"
+        aria-pressed="${on}"><span class="dot"></span>${m.label}${on ? " · gäller idag" : ""}</button>`;
+    }).join("")}</div>
     <div class="slot-lbl">Period</div>
     <div class="lifemodes">${Object.entries(LIFE_MODES).map(([rule, m]) => {
       const on = (S.overlay?.modes?.active ?? []).find(a => a.rule === rule);
       return `<button class="chipbtn modetog${on ? " on" : ""}" data-mode="${rule}"
         aria-pressed="${!!on}"><span class="dot"></span>${m.label}</button>`;
     }).join("")}</div>
-    <p class="cue">${Object.values(LIFE_MODES).map(m => `${m.label}: ${m.why}`).join(" ")}</p>
+    <p class="cue">${Object.values(DAY_FLAGS).map(m => `${m.label}: ${m.why}`).join(" ")}
+      ${Object.values(LIFE_MODES).map(m => `${m.label}: ${m.why}`).join(" ")}</p>
     <p class="hint">Lägen rör pass — aldrig blockgränser, loppdatum eller delmål. Allt går att ångra.</p>
   </section>`);
 }
@@ -1129,7 +1138,74 @@ function engineFlags() {
     if (r != null && r >= 9) f.push({ id: "rpe-watch", sessionId: id });
   }
   f.push(...wellnessFlags(S.cache?.wellness ?? [], today()));
+  f.push(...dayFlagEngineFlags(S.overlay, today()));   /* B19-1: expiry per körning */
   return f;
+}
+
+/* ---------- Dagsform (B19-1, 0.19.0) ----------
+   Sov dåligt = dygnsflagga (släpper vid midnatt) · Känning = periodläge
+   (samma data-mode som i Plan) · Hinner inte = tillståndslös action in i
+   missed-flödet. Tre semantiker ⇒ tre mekanismer, ett chipsband. */
+function sleepFlagToggle() {
+  const d = today();
+  if (dayFlagActive(S.overlay, "sleep", d)) {
+    S.overlay = clearDayFlag(S.overlay, "sleep", d, now());
+    const w = S.store.saveOverlay(S.overlay);
+    S.note = w.ok ? { text: "Sov dåligt släppt — dagens pass återställda." }
+                  : { text: w.error, bad: true };
+    runEngine({ apply: false });
+  } else {
+    const r = setDayFlag(S.overlay, "sleep", d, now());
+    if (r.error) { S.note = { text: r.error, bad: true }; return; }
+    S.overlay = r.overlay;
+    const w = S.store.saveOverlay(S.overlay);
+    if (!w.ok) { S.note = { text: w.error, bad: true }; return; }
+    runEngine();
+    S.note = { text: "Sov dåligt: dagens kvalitet växlas ned till Z2. Gäller idag — tryck igen för att ångra." };
+  }
+  recomputeMatches();
+}
+
+function reportMissed(id) {
+  const r = applyRules(S.plan, S.overlay, S.cfg,
+                       [...engineFlags(), { id: "missed", sessionId: id }], now());
+  const mine = r.actions.filter(a => a.session === id && String(a.rule).startsWith("missed"));
+  const ch = mine.filter(a => a.action !== "warn");
+  if (ch.length) {
+    S.overlay = applyActions(S.overlay, ch);
+    const w = S.store.saveOverlay(S.overlay);
+    if (!w.ok) { S.note = { text: w.error, bad: true }; return; }
+  }
+  const a = mine[0];
+  S.note = !a ? { text: "Inget att göra — passet är redan hanterat." }
+    : a.action === "move"   ? { text: `A-passet flyttat: ${a.why}` }
+    : a.action === "strike" ? { text: a.why }
+    : { text: a.why };
+  S.missPick = false;
+  runEngine({ apply: false });
+  recomputeMatches();
+}
+
+function dayformChips(h, planned) {
+  const d = today();
+  const sleepOn = dayFlagActive(S.overlay, "sleep", d);
+  const tfOn = (S.overlay?.modes?.active ?? []).some(a => a.rule === "tissue-freeze");
+  h.push(`<section class="dayform card"><div class="eyebrow">Om inte?</div>
+    <div class="lifemodes">
+      <button class="chipbtn modetog${sleepOn ? " on" : ""}" data-dayflag="sleep"
+        aria-pressed="${sleepOn}"><span class="dot"></span>${DAY_FLAGS.sleep.label}${sleepOn ? " · gäller idag" : ""}</button>
+      <button class="chipbtn modetog${tfOn ? " on" : ""}" data-mode="tissue-freeze"
+        aria-pressed="${tfOn}"><span class="dot"></span>${LIFE_MODES["tissue-freeze"].label}</button>
+      ${planned.length ? `<button class="chipbtn actchip" data-nothit>Hinner inte&nbsp;›</button>` : ""}
+    </div>
+    ${S.missPick && planned.length ? `<div class="misspick">
+      <p class="hint">Vilket pass hinner du inte? A flyttas om det går, B stryks — jagas aldrig ikapp.</p>
+      ${planned.map(s => `<div class="qrow"><div class="qtext"><b>${esc(s.title ?? s.id)}</b>
+        <span class="dim">${s.durationMin} min · ${esc(s.prio)}-pass${s.protected ? " · ◈ skyddat" : ""}</span></div>
+        <div class="qacts"><button data-missed="${esc(s.id)}">Hinner inte</button></div></div>`).join("")}
+      <div class="acts"><button class="ghostbtn" data-missabort>Avbryt</button></div>
+    </div>` : ""}
+  </section>`);
 }
 
 function warnStep(h) {                     /* varningstrappan (designspråk §7) */
@@ -1314,7 +1390,7 @@ function wire() {
       return;
     }
     swallowUntil = 0;
-    const t = ev.target.closest("[data-act],[data-order],[data-pastopen],[data-briefopen],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
+    const t = ev.target.closest("[data-act],[data-order],[data-pastopen],[data-briefopen],[data-cancel],[data-close],[data-target],[data-today],[data-link],[data-nolink],[data-backup],[data-download],[data-import],[data-import-go],[data-nav],[data-orphan],[data-buzztest],[data-selday],[data-backtoday],[data-logopen],[data-logsave],[data-logcancel],[data-unlog],[data-adjopen],[data-adjcancel],[data-adj],[data-mode],[data-dayflag],[data-nothit],[data-missed],[data-missabort],[data-eqyes],[data-eqno],[data-warnack],[data-engsave],[data-evlog],[data-histopen],[data-histclose],[data-chandle],[data-mprev],[data-mnext],[data-connsave],[data-conntest],[data-sync],[data-clearcache],[data-swimhr],[data-dim],[data-effsport],[data-effzone],[data-effrange],[data-effpt],[data-pmcrange],[data-pmcday]");
     if (!t) return;
     S.note = null;
     if (t.dataset.chandle != null) { cuCommit(!S.monthOpen); return; }
@@ -1324,6 +1400,10 @@ function wire() {
     if (t.dataset.evlog != null) { S.evOpen = !S.evOpen; render(); return; }
     if (t.dataset.histopen) { S.histOpen = t.dataset.histopen; render(); return; }
     if (t.dataset.histclose != null) { S.histOpen = null; render(); return; }
+    if (t.dataset.dayflag) { sleepFlagToggle(); render(); return; }
+    if (t.dataset.nothit != null) { S.missPick = !S.missPick; render(); return; }
+    if (t.dataset.missabort != null) { S.missPick = false; render(); return; }
+    if (t.dataset.missed) { reportMissed(t.dataset.missed); render(); return; }
     if (t.dataset.mode) {
       const rule = t.dataset.mode;
       const on = (S.overlay?.modes?.active ?? []).find(a => a.rule === rule);
@@ -1343,6 +1423,12 @@ function wire() {
         S.note = { text: `${LIFE_MODES[rule].label} aktiverat. ${LIFE_MODES[rule].why}` };
       }
       recomputeMatches(); render(); return;
+    }
+    if (t.dataset.eqyes === "sleep-guard") {
+      /* B19-1: derived-frågans Ja landar i samma dygnsflagga som chippet —
+         samma tillstånd, samma expiry, samma ångra. */
+      if (!dayFlagActive(S.overlay, "sleep", today())) sleepFlagToggle();
+      render(); return;
     }
     if (t.dataset.eqyes) {
       const q = S.eq.find(x => x.rule === t.dataset.eqyes);

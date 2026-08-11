@@ -3,7 +3,7 @@
    Regelverk v0.2 · Planformat v0.3 · Designspråk v0.1 · Matchning v0.2 */
 "use strict";
 
-export const BUILD = "next-0.18.3 · 2026-08-10";
+export const BUILD = "next-0.19.0 · 2026-08-11";
 export const FORMAT_VERSION = 1;
 
 /* ---------- Konstanter (spec-ärvda) ---------- */
@@ -482,7 +482,8 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
   /* sleep-guard — D2: derived frågar, manual agerar */
   for (const f of flags.filter(f => f.id === "sleep-guard")) {
     const day = f.date ?? nowDate;
-    const targets = list().filter(s => s.status !== "struck" && isQuality(s) && dateOf(s.id) === day);
+    const targets = list().filter(s => (s.status ?? "planned") === "planned"
+                                       && isQuality(s) && dateOf(s.id) === day);
     if (!targets.length) continue;
     if (f.source === "derived") {
       questions.push({ rule: "sleep-guard", sessions: targets.map(s => s.id),
@@ -495,7 +496,8 @@ export function applyRules(plan, overlay, bindings = {}, flags = [], now = "") {
       if (sameJson(np, s.profile)) continue;
       if (push("sleep-guard", 1, s.id, "downgrade",
                "Dålig natt: dagens kvalitet växlas ned till Z2. Aldrig hård löpning efter dålig natt.",
-               { profile: np }, { profile: s.profile })) s.profile = np;
+               { profile: np }, { profile: s.profile },
+               f.modeKey ? { modeKey: f.modeKey } : {})) s.profile = np;
     }
   }
 
@@ -722,27 +724,33 @@ export function applyActions(overlay, actions) {
    Återställer ögonblicksbilden UTOM för pass användaren rört manuellt
    under lägets gång (events med rule "manual-*" efter lägets start).
    Ångring loggas som egen post; events skrivs aldrig om. */
-export function deactivateMode(overlay, key, now = "") {
-  const ov = structuredClone(overlay ?? {});
-  ov.sessions ??= {}; ov.modes ??= {};
-  const mode = (ov.modes.active ?? []).find(m => m.rule + "@" + m.from === key);
-  const t0 = mode?.t ?? "";
+/* Delad återställningsväg (spec 1 §9) för periodlägen OCH dygnsflaggor:
+   snapshot åter — UTOM pass användaren rört manuellt efter t0. Handen vinner.
+   Ångring loggas som egen post; events skrivs aldrig om. */
+function restoreSnapshot(ov, key, t0, now, whyKeep, whyRestore) {
   const sn = ov.modes.snapshots?.[key] ?? {};
   for (const [id, prior] of Object.entries(sn)) {
     const cur = ov.sessions[id] ?? {};
     const events = cur.events ?? [];
     const userWon = events.some(e => String(e.rule ?? "").startsWith("manual") && String(e.t) > String(t0));
     if (userWon) {
-      events.push({ rule: "undo:" + key, session: id, action: "keep",
-                    why: "Läge avaktiverat — användarens manuella version behålls.", t: now });
+      events.push({ rule: "undo:" + key, session: id, action: "keep", why: whyKeep, t: now });
       ov.sessions[id] = { ...cur, events };
     } else {
       ov.sessions[id] = { ...structuredClone(prior ?? {}), events:
-        [...events, { rule: "undo:" + key, session: id, action: "restore",
-                      why: "Läge avaktiverat — föregående tillstånd återställt.", t: now }] };
+        [...events, { rule: "undo:" + key, session: id, action: "restore", why: whyRestore, t: now }] };
     }
   }
   if (ov.modes.snapshots) delete ov.modes.snapshots[key];
+}
+
+export function deactivateMode(overlay, key, now = "") {
+  const ov = structuredClone(overlay ?? {});
+  ov.sessions ??= {}; ov.modes ??= {};
+  const mode = (ov.modes.active ?? []).find(m => m.rule + "@" + m.from === key);
+  restoreSnapshot(ov, key, mode?.t ?? "", now,
+    "Läge avaktiverat — användarens manuella version behålls.",
+    "Läge avaktiverat — föregående tillstånd återställt.");
   ov.modes.active = (ov.modes.active ?? []).filter(m => m.rule + "@" + m.from !== key);
   (ov.modes.log ??= []).push({ rule: "mode-off", session: null, action: "deactivate",
     why: `Läget ${key} avaktiverat.`, t: now });
@@ -2302,6 +2310,64 @@ export function activateMode(overlay, rule, { from, to = null } = {}, now = "") 
   (ov.modes.log ??= []).push({ rule: "mode-on", session: null, action: "activate",
     why: `${LIFE_MODES[rule].label} aktiverat från ${from}${to ? ` till ${to}` : ""}.`, t: now });
   return { overlay: ov, key };
+}
+
+/* ================================================================
+   DYGNSFLAGGOR (B19-1, 0.19.0) — dagsform, skild från LIFE_MODES.
+   Tre semantiker, tre mekanismer: periodläge (snapshot, manuell av),
+   dygnsflagga (datumstämplad, släpper vid midnatt), action (tillståndslös).
+   Flaggan lagras i overlayen (ingen ny nyckel), utvärderas mot DAGENS
+   datum vid varje anrop — aldrig boot-tillstånd (0.18.1-läxan).
+   En framtida derived-trigger (RHR-fråga, D2) landar i samma flagga:
+   ett beteende, två ingångar.
+   ================================================================ */
+export const DAY_FLAGS = {
+  sleep: { label: "Sov dåligt", rule: "sleep-guard",
+           why: "Dagens kvalitetspass växlas ned till Z2. Gäller idag — släpper vid midnatt." }
+};
+const dayKey = (flag, date) => `dayflag:${flag}@${date}`;
+
+export function setDayFlag(overlay, flag, date, now = "") {
+  if (!DAY_FLAGS[flag]) return { error: `okänd dagsflagga: ${flag}` };
+  if (!DATE_RE.test(String(date))) return { error: "dagsflaggan saknar giltigt datum" };
+  const ov = structuredClone(overlay ?? {});
+  ov.modes ??= {};
+  const prev = ov.modes.dayflags ?? [];
+  if (prev.some(f => f.flag === flag && f.date === date)) return { error: "flaggan är redan satt" };
+  /* Städa passerade dagars flaggor + snapshots: dagen hände med flaggan,
+     inget ska återställas i efterhand. */
+  for (const f of prev) if (f.date !== date && ov.modes.snapshots)
+    delete ov.modes.snapshots[dayKey(f.flag, f.date)];
+  ov.modes.dayflags = [...prev.filter(f => f.date === date), { flag, date, t: now }];
+  (ov.modes.log ??= []).push({ rule: "dayflag-on", session: null, action: "activate",
+    why: `${DAY_FLAGS[flag].label} — gäller ${date}.`, t: now });
+  return { overlay: ov, key: dayKey(flag, date) };
+}
+
+export function clearDayFlag(overlay, flag, date, now = "") {
+  const ov = structuredClone(overlay ?? {});
+  ov.sessions ??= {}; ov.modes ??= {};
+  const f = (ov.modes.dayflags ?? []).find(x => x.flag === flag && x.date === date);
+  if (!f) return ov;
+  restoreSnapshot(ov, dayKey(flag, date), f.t ?? "", now,
+    "Flaggan släppt — användarens manuella version behålls.",
+    "Flaggan släppt — föregående tillstånd återställt.");
+  ov.modes.dayflags = ov.modes.dayflags.filter(x => !(x.flag === flag && x.date === date));
+  (ov.modes.log ??= []).push({ rule: "dayflag-off", session: null, action: "deactivate",
+    why: `${DAY_FLAGS[flag].label} släppt för ${date}.`, t: now });
+  return ov;
+}
+
+export const dayFlagActive = (overlay, flag, todayISO) =>
+  (overlay?.modes?.dayflags ?? []).some(f => f.flag === flag && f.date === todayISO);
+
+/* Motorflaggor ur dygnsflaggorna. Datumet utvärderas VID VARJE anrop:
+   en flagga satt igår är inert idag, oavsett hur länge appen stått öppen. */
+export function dayFlagEngineFlags(overlay, todayISO) {
+  return (overlay?.modes?.dayflags ?? [])
+    .filter(f => DAY_FLAGS[f.flag] && f.date === todayISO)
+    .map(f => ({ id: DAY_FLAGS[f.flag].rule, source: "manual", date: f.date,
+                 modeKey: dayKey(f.flag, f.date) }));
 }
 
 
